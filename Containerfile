@@ -1,12 +1,11 @@
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
-# Instalación de utilidades core nativas (Infraestructura pura)
+# Instalación de utilidades core nativas
 RUN rpm-ostree install \
     btop \
     nmap \
     tmux \
-    zsh \
-    && rpm-ostree cleanup -a
+    zsh
 
 # Habilitación de servicios base (Auto-update de Podman)
 RUN ln -s /usr/lib/systemd/system/podman-auto-update.timer \
