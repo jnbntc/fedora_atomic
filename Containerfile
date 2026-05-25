@@ -1,14 +1,7 @@
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
-# Inyección de repositorios
-RUN cat <<REPOS > /etc/yum.repos.d/microsoft-edge.repo
-[microsoft-edge]
-name=microsoft-edge
-baseurl=https://packages.microsoft.com/yumrepos/edge/
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc
-REPOS
+# Inyección de repositorios (Sintaxis POSIX estricta para parser de Buildah)
+RUN printf "[microsoft-edge]\nname=microsoft-edge\nbaseurl=https://packages.microsoft.com/yumrepos/edge/\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc\n" > /etc/yum.repos.d/microsoft-edge.repo
 
 # Instalación de paquetes atómicos
 RUN rpm-ostree install \
