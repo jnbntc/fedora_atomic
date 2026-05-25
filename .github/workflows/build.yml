@@ -1,0 +1,48 @@
+name: Build Custom Fedora Atomic
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 4 * * 7'
+
+env:
+  IMAGE_NAME: fedora_atomic
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@main
+        with:
+          root-reserve-mb: 20480
+          remove-dotnet: 'true'
+          remove-android: 'true'
+
+      - name: Build Image using Buildah
+        id: build-image
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: latest
+          containerfiles: |
+            ./Containerfile
+          oci: true
+
+      - name: Push to GHCR
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build-image.outputs.image }}
+          tags: ${{ steps.build-image.outputs.tags }}
+          registry: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
