@@ -22,7 +22,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Maximize Build Space
-        uses: easimon/maximize-build-space@main
+        uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 20480
           remove-dotnet: 'true'
