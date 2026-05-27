@@ -9,6 +9,7 @@ RUN rpm-ostree override remove \
     firefox-langpacks
 
 # 3. Instalación de utilidades core y telemetría
+# Instalación de utilidades core y telemetría de silicio
 RUN rpm-ostree install \
     btop \
     nmap \
@@ -20,7 +21,10 @@ RUN rpm-ostree install \
     distrobox \
     fira-code-fonts \
     jetbrains-mono-fonts \
-    tailscale
+    tailscale \
+    intel-compute-runtime \
+    intel-media-driver \
+    clinfo
 
 # 4. Habilitación de servicios base (Auto-update y VPN)
 RUN ln -s /usr/lib/systemd/system/podman-auto-update.timer \
