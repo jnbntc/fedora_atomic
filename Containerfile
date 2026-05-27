@@ -24,6 +24,7 @@ RUN rpm-ostree install \
     tailscale \
     intel-compute-runtime \
     libva-intel-media-driver \
+    intel-gpu-tools \
     clinfo
 
 # 4. Habilitación de servicios base (Auto-update y VPN)
