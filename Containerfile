@@ -23,7 +23,7 @@ RUN rpm-ostree install \
     jetbrains-mono-fonts \
     tailscale \
     intel-compute-runtime \
-    intel-media-driver \
+    libva-intel-media-driver \
     clinfo
 
 # 4. Habilitación de servicios base (Auto-update y VPN)
