@@ -1,3 +1,4 @@
+
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
 # 1. Inyección de repositorios de infraestructura
@@ -25,7 +26,8 @@ RUN rpm-ostree install \
     intel-compute-runtime \
     libva-intel-media-driver \
     intel-gpu-tools \
-    clinfo
+    clinfo \
+    restic
 
 # 4. Habilitación de servicios base (Auto-update y VPN)
 RUN ln -s /usr/lib/systemd/system/podman-auto-update.timer \
