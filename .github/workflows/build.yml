@@ -2,8 +2,8 @@ name: Fedora Atomic Core - Build & SecScan
 
 on:
   schedule:
-    - cron: '0 3 * * *' # Ejecución Nightly (3:00 AM UTC)
-  workflow_dispatch:      # Permite disparo manual desde la UI de GitHub
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fedora_atomic
@@ -20,30 +20,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Compilación en entorno efímero
-      - name: Build OCI Image
+      # 1. Compilación con el motor nativo (Podman)
+      - name: Build OCI Image with Podman
         run: |
-          docker build -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          podman build -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          # Exportamos la imagen a un tarball inmutable para el escáner
+          podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 2. Inyección de Trivy (El Gatekeeper)
+      # 2. Inyección de Trivy (Escaneo de archivo Tar)
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
+          input: 'fedora-atomic.tar'     # Cambio crítico: apuntamos al archivo, no al daemon
           format: 'table'
-          exit-code: '1'          # Retorna exit 1 (rompe el pipeline) si detecta la amenaza
-          ignore-unfixed: true    # REGLA CRÍTICA DE ARQUITECTURA
+          exit-code: '1'
+          ignore-unfixed: true
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-      # 3. Autenticación y Despliegue (Solo si Trivy retorna exit 0)
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      # 3. Autenticación nativa OCI
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
+      # 4. Despliegue seguro
       - name: Push Verified Image
         run: |
-          docker push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
