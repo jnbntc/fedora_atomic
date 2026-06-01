@@ -1,4 +1,3 @@
-
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
 # 1. Inyección de repositorios de infraestructura
@@ -9,8 +8,7 @@ RUN rpm-ostree override remove \
     firefox \
     firefox-langpacks
 
-# 3. Instalación de utilidades core y telemetría
-# Instalación de utilidades core y telemetría de silicio
+# 3. Instalación de utilidades core, telemetría y virtualización
 RUN rpm-ostree install \
     btop \
     nmap \
@@ -27,7 +25,10 @@ RUN rpm-ostree install \
     libva-intel-media-driver \
     intel-gpu-tools \
     clinfo \
-    restic
+    restic \
+    qemu-system-x86 \
+    edk2-ovmf \
+    evtest
 
 # 4. Habilitación de servicios base (Auto-update y VPN)
 RUN ln -s /usr/lib/systemd/system/podman-auto-update.timer \
