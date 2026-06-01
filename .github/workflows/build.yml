@@ -20,10 +20,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Compilación en entorno efímero (sin empujar al registro todavía)
+      # 1. Compilación en entorno efímero
       - name: Build OCI Image
         run: |
-          docker build -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          docker build -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
 
       # 2. Inyección de Trivy (El Gatekeeper)
       - name: Run Trivy Vulnerability Scanner
