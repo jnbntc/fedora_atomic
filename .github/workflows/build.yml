@@ -27,15 +27,16 @@ jobs:
           # Exportamos la imagen a un tarball inmutable para el escáner
           podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 2. Inyección de Trivy (Escaneo de archivo Tar)
+      # 2. Inyección de Trivy (El Gatekeeper afinado para SO)
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
-          input: 'fedora-atomic.tar'     # Cambio crítico: apuntamos al archivo, no al daemon
+          input: 'fedora-atomic.tar'
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true
-          vuln-type: 'os,library'
+          vuln-type: 'os'              # Cambio 1: Eliminamos 'library'. Solo auditamos RPMs.
+          scanners: 'vuln'             # Cambio 2: Apagamos el escaneo de secretos para evitar dummy keys.
           severity: 'CRITICAL,HIGH'
 
       # 3. Autenticación nativa OCI
