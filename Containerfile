@@ -30,6 +30,9 @@ RUN rpm-ostree install \
     edk2-ovmf \
     evtest \
     thermald
+    starship \
+    zsh-autosuggestions \
+    zsh-syntax-highlighting
 
 # 4. Tuning de Hardware (ZRAM IA & Wi-Fi ASPM)
 RUN mkdir -p /etc/systemd/zram-generator.conf.d && \
