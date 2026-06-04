@@ -29,7 +29,7 @@ RUN rpm-ostree install \
     qemu-system-x86 \
     edk2-ovmf \
     evtest \
-    thermald
+    thermald \
     starship \
     zsh-autosuggestions \
     zsh-syntax-highlighting
