@@ -8,31 +8,8 @@ RUN rpm-ostree override remove \
     firefox \
     firefox-langpacks
 
-# 3. Stack Core, Virtualización y Telemetría
-RUN rpm-ostree install \
-    btop \
-    nmap \
-    tmux \
-    zsh \
-    cockpit \
-    cockpit-podman \
-    cockpit-system \
-    distrobox \
-    fira-code-fonts \
-    jetbrains-mono-fonts \
-    tailscale \
-    intel-compute-runtime \
-    libva-intel-media-driver \
-    intel-gpu-tools \
-    clinfo \
-    restic \
-    qemu-system-x86 \
-    edk2-ovmf \
-    evtest \
-    thermald \
-    starship \
-    zsh-autosuggestions \
-    zsh-syntax-highlighting
+# 3. Stack Core, Virtualización, Telemetría y UI
+RUN rpm-ostree install btop nmap tmux zsh cockpit cockpit-podman cockpit-system distrobox fira-code-fonts jetbrains-mono-fonts tailscale intel-compute-runtime libva-intel-media-driver intel-gpu-tools clinfo restic qemu-system-x86 edk2-ovmf evtest thermald starship zsh-autosuggestions zsh-syntax-highlighting
 
 # 4. Tuning de Hardware (ZRAM IA & Wi-Fi ASPM)
 RUN mkdir -p /etc/systemd/zram-generator.conf.d && \
