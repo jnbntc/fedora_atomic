@@ -30,6 +30,7 @@ RUN rpm-ostree install \
     edk2-ovmf \
     evtest \
     thermald \
+    alacritty \
     zsh-autosuggestions \
     zsh-syntax-highlighting
 
