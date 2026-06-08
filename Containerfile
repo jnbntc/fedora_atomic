@@ -1,7 +1,8 @@
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
-# 1. Inyección de repositorios de infraestructura
-RUN curl -sL https://pkgs.tailscale.com/stable/fedora/tailscale.repo -o /etc/yum.repos.d/tailscale.repo
+# 1. Inyección de repositorios de infraestructura (Tailscale y Microsoft)
+RUN curl -sL https://pkgs.tailscale.com/stable/fedora/tailscale.repo -o /etc/yum.repos.d/tailscale.repo && \
+    echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo
 
 # 2. Purga de entropía upstream
 RUN rpm-ostree override remove \
