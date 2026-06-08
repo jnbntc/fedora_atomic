@@ -8,10 +8,12 @@ RUN rpm-ostree override remove \
     firefox \
     firefox-langpacks
 
-# 3. Stack Core, Virtualización y Controladores de Hardware (XPU)
+# 3. Stack Core, Virtualización, IDE Nativo y Controladores de Hardware (XPU)
 # NOTA: oneapi e intel-compute son drivers del kernel base, estrictamente 
 # necesarios para el passthrough de /dev/dri hacia los contenedores Podman.
+# Se inyecta 'code' para evitar los problemas de sockets de la versión Flatpak.
 RUN rpm-ostree install \
+    code \
     btop \
     nmap \
     tmux \
