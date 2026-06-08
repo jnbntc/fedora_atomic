@@ -8,7 +8,7 @@ RUN rpm-ostree override remove \
     firefox \
     firefox-langpacks
 
-# 3. Stack Core, Virtualización y Telemetría
+# 3. Stack Core, Virtualización, Telemetría y XPU (Intel OneAPI)
 RUN rpm-ostree install \
     btop \
     nmap \
@@ -23,6 +23,8 @@ RUN rpm-ostree install \
     tailscale \
     intel-compute-runtime \
     libva-intel-media-driver \
+    oneapi-level-zero \
+    oneapi-level-zero-devel \
     intel-gpu-tools \
     clinfo \
     restic \
