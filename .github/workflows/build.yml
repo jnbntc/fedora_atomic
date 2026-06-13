@@ -2,7 +2,7 @@ name: Fedora Atomic Core - Build & SecScan
 
 on:
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 22 * * *' # 22:00 UTC / 19:00 ART
   workflow_dispatch:
 
 env:
