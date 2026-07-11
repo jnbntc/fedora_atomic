@@ -38,6 +38,7 @@ RUN rpm-ostree override remove \
         alacritty \
         zsh-autosuggestions \
         zsh-syntax-highlighting && \
+        steam-devices \
     rpm-ostree cleanup -m
 
 # 3. Inyección nativa de Starship
