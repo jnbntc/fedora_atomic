@@ -2,7 +2,7 @@ name: Fedora Atomic Core - Build & SecScan
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 21:00 UTC / 18:00 ART
+    - cron: '0 22 * * *' # 22:00 UTC / 19:00 ART
   workflow_dispatch:
 
 env:
@@ -20,34 +20,34 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Compilación con el motor nativo (Podman) y caché remota integrada
+      # 1. Autenticación OCI temprana (Permite a Podman descargar el --cache-from desde GHCR sin error de permisos)
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # 2. Compilación con motor nativo (Podman) usando sintaxis de caché directa
       - name: Build OCI Image with Podman
         run: |
           podman build \
-            --cache-to=registry=${{ env.IMAGE_NAME }}:buildcache \
-            --cache-from=registry=${{ env.IMAGE_NAME }}:buildcache \
+            --cache-to=${{ env.IMAGE_NAME }}:buildcache \
+            --cache-from=${{ env.IMAGE_NAME }}:buildcache \
             -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
           # Exportamos la imagen a un tarball inmutable para el escáner
           podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 2. Inyección de Trivy (El Gatekeeper afinado para SO con contingencia)
+      # 3. Inyección de Trivy (El Gatekeeper afinado para SO con contingencia)
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
           input: 'fedora-atomic.tar'
           format: 'table'
-          exit-code: '0'               # Cambio: Evita bloquear el deployment local por CVEs upstream sin parche inmediato en repos RPM
+          exit-code: '0'               # Evita bloquear el deployment por CVEs upstream sin parche inmediato en repos RPM
           ignore-unfixed: true
           vuln-type: 'os'
           scanners: 'vuln'
           severity: 'CRITICAL,HIGH'
 
-      # 3. Autenticación nativa OCI
-      - name: Login to GHCR via Podman
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
-
-      # 4. Despliegue seguro y actualización del caché
+      # 4. Despliegue seguro de la imagen y del artefacto de caché
       - name: Push Verified Image & Build Cache
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
