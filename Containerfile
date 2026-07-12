@@ -13,7 +13,6 @@ RUN rpm-ostree override remove \
     rpm-ostree install \
         code \
         btop \
-        nmap \
         tmux \
         zsh \
         cockpit \
@@ -35,7 +34,6 @@ RUN rpm-ostree override remove \
         edk2-ovmf \
         evtest \
         thermald \
-        alacritty \
         zsh-autosuggestions \
         zsh-syntax-highlighting \
         steam-devices && \
