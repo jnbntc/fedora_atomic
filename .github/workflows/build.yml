@@ -2,11 +2,12 @@ name: Fedora Atomic Core - Build & SecScan
 
 on:
   schedule:
-    - cron: '0 21 * * *' # 21:00 UTC / 18:00 ART
+    - cron: '0 22 * * *' # 22:00 UTC / 19:00 ART
   workflow_dispatch:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fedora_atomic
+  CACHE_REPO: ghcr.io/${{ github.repository_owner }}/fedora_atomic/cache
   IMAGE_TAG: latest
 
 jobs:
@@ -20,21 +21,22 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Autenticación OCI temprana (Obligatorio para que Podman pueda descargar --cache-from sin error de permisos)
+      # 1. Autenticación OCI temprana (Obligatorio para leer/escribir blobs en el namespace de caché)
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación nativa pasando la URI limpia de la imagen de caché
+      # 2. Compilación indicando el repositorio limpio de caché (sin tags ni digests)
       - name: Build OCI Image with Podman
         run: |
           podman build \
-            --cache-to=${{ env.IMAGE_NAME }}:buildcache \
-            --cache-from=${{ env.IMAGE_NAME }}:buildcache \
+            --cache-to=${{ env.CACHE_REPO }} \
+            --cache-from=${{ env.CACHE_REPO }} \
             -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+          # Exportamos a tarball inmutable para el escaneo de seguridad
           podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 3. Escaneo no bloqueante para evitar caída por CVEs upstream de Fedora sin parche
+      # 3. Escaneo no bloqueante para evitar caídas por CVEs upstream sin parche en Fedora
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -46,8 +48,7 @@ jobs:
           scanners: 'vuln'
           severity: 'CRITICAL,HIGH'
 
-      # 4. Despliegue de la imagen final y actualización del tar de caché en GHCR
-      - name: Push Verified Image & Build Cache
+      # 4. Despliegue de la imagen final (Los blobs de caché ya fueron empujados por --cache-to en el Paso 2)
+      - name: Push Verified Image
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          podman push ${{ env.IMAGE_NAME }}:buildcache || true
