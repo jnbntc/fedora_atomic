@@ -85,7 +85,7 @@ jobs:
     steps:
       # A. Purga instantánea de todas las capas huérfanas (untagged) en imagen y caché
       - name: Delete untagged images and orphan cache blobs
-        uses: snok/container-retention-policy@v3
+        uses: snok/container-retention-policy@v2
         with:
           account-type: personal
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -94,6 +94,18 @@ jobs:
           timestamp-to-use: updated_at
           untagged-only: true
           keep-at-least: 1
+          skip-tags: latest
+
+      # B. Rotación de historial: Borra tags inmutables de fecha con más de 14 días (conserva al menos 5)
+      - name: Prune old dated builds (>14 days)
+        uses: snok/container-retention-policy@v2
+        with:
+          account-type: personal
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: fedora_atomic
+          cut-off: 14d
+          timestamp-to-use: updated_at
+          keep-at-least: 5
           skip-tags: latest
 
       # B. Rotación de historial: Borra tags inmutables de fecha con más de 14 días (conserva al menos 5)
