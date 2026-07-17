@@ -1,12 +1,15 @@
 FROM quay.io/fedora-ostree-desktops/silverblue:44
 
-# 1. Inyección de llaves GPG y repositorios (Solo Infra y VS Code)
+# 1. Inyección de llaves GPG y repositorios (Capa estática - Se beneficia del caché OCI)
 RUN rpm --import https://packages.microsoft.com/keys/microsoft.asc && \
     rpm --import https://pkgs.tailscale.com/stable/fedora/repo.gpg && \
     curl -sL https://pkgs.tailscale.com/stable/fedora/tailscale.repo -o /etc/yum.repos.d/tailscale.repo && \
     echo -e "[code]\nname=Visual Studio Code\nbaseurl=https://packages.microsoft.com/yumrepos/vscode\nenabled=1\ngpgcheck=1\ngpgkey=https://packages.microsoft.com/keys/microsoft.asc" > /etc/yum.repos.d/vscode.repo
 
-# 2. Transacción core: Purga upstream, Instalación masiva y Limpieza
+# BARRERA DE CACHÉ: Al variar el argumento con la fecha del día, Podman descarta el caché de aquí en adelante
+ARG CACHE_BUSTER=0
+
+# 2. Transacción core: Purga upstream, Instalación masiva y Limpieza (Ejecución diaria garantizada)
 RUN rpm-ostree override remove \
         firefox \
         firefox-langpacks && \
@@ -39,7 +42,7 @@ RUN rpm-ostree override remove \
         steam-devices && \
     rpm-ostree cleanup -m
 
-# 3. Inyección de Starship (Al no existir en repos oficiales, se sella directamente en el árbol inmutable)
+# 3. Inyección de Starship
 RUN curl -sS https://starship.rs/install.sh | sh -s -- -y -b /usr/bin
 
 # 4. Tuning de Hardware (ZRAM optimizado para IA, Sysctl y Wi-Fi ASPM)
