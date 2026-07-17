@@ -24,7 +24,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Autenticación OCI temprana (Obligatorio para leer/escribir blobs en el namespace de caché)
+      # 1. Autenticación OCI temprana
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -83,7 +83,7 @@ jobs:
       packages: write
     
     steps:
-      # A. Purga instantánea de todas las capas huérfanas (untagged) en imagen y caché
+      # A. Purga instantánea de todas las capas huérfanas (untagged) usando la versión estable @v2
       - name: Delete untagged images and orphan cache blobs
         uses: snok/container-retention-policy@v2
         with:
@@ -99,18 +99,6 @@ jobs:
       # B. Rotación de historial: Borra tags inmutables de fecha con más de 14 días (conserva al menos 5)
       - name: Prune old dated builds (>14 days)
         uses: snok/container-retention-policy@v2
-        with:
-          account-type: personal
-          token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: fedora_atomic
-          cut-off: 14d
-          timestamp-to-use: updated_at
-          keep-at-least: 5
-          skip-tags: latest
-
-      # B. Rotación de historial: Borra tags inmutables de fecha con más de 14 días (conserva al menos 5)
-      - name: Prune old dated builds (>14 days)
-        uses: snok/container-retention-policy@v3
         with:
           account-type: personal
           token: ${{ secrets.GITHUB_TOKEN }}
