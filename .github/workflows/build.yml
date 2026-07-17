@@ -26,16 +26,31 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación indicando el repositorio limpio de caché (sin tags ni digests)
+      # 2. Compilación forzando verificación upstream y generando tag de versionado inmutable
       - name: Build OCI Image with Podman
         run: |
+          # Generamos un tag inmutable con la fecha (ej: 20260717)
+          DATE_TAG=$(date +%Y%m%d)
+          echo "DATE_TAG=${DATE_TAG}" >> $GITHUB_ENV
+
           podman build \
+            --pull=always \
             --cache-to=${{ env.CACHE_REPO }} \
             --cache-from=${{ env.CACHE_REPO }} \
-            -f Containerfile -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} .
+            -f Containerfile \
+            -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
+            -t ${{ env.IMAGE_NAME }}:${DATE_TAG} .
+            
           # Exportamos a tarball inmutable para el escaneo de seguridad
           podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
+      # (El paso 3 de Trivy queda exactamente igual...)
+
+      # 4. Despliegue de ambos tags (flotante e inmutable)
+      - name: Push Verified Image
+        run: |
+          podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
       # 3. Escaneo no bloqueante para evitar caídas por CVEs upstream sin parche en Fedora
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
