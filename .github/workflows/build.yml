@@ -73,7 +73,7 @@ jobs:
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
 
-  # -------------------------------------------------------------------------
+# -------------------------------------------------------------------------
   # JOB 2: LIMPIEZA ASÍNCRONA DEL REGISTRO (RETENCIÓN Y PURGA)
   # -------------------------------------------------------------------------
   cleanup-registry:
@@ -83,27 +83,27 @@ jobs:
       packages: write
     
     steps:
-      # A. Purga instantánea de todas las capas huérfanas (untagged) usando la versión estable @v2
+      # A. Purga instantánea de capas huérfanas (con formato formal de zona horaria)
       - name: Delete untagged images and orphan cache blobs
         uses: snok/container-retention-policy@v2
         with:
           account-type: personal
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: fedora_atomic, fedora_atomic/cache
-          cut-off: 0s
+          cut-off: "0 seconds ago UTC"
           timestamp-to-use: updated_at
           untagged-only: true
           keep-at-least: 1
           skip-tags: latest
 
-      # B. Rotación de historial: Borra tags inmutables de fecha con más de 14 días (conserva al menos 5)
+      # B. Rotación de historial: Borra builds con más de 14 días en UTC
       - name: Prune old dated builds (>14 days)
         uses: snok/container-retention-policy@v2
         with:
           account-type: personal
           token: ${{ secrets.GITHUB_TOKEN }}
           image-names: fedora_atomic
-          cut-off: 14d
+          cut-off: "14 days ago UTC"
           timestamp-to-use: updated_at
           keep-at-least: 5
           skip-tags: latest
