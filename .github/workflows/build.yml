@@ -73,7 +73,7 @@ jobs:
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
 
-# -------------------------------------------------------------------------
+  # -------------------------------------------------------------------------
   # JOB 2: LIMPIEZA ASÍNCRONA DEL REGISTRO (RETENCIÓN Y PURGA)
   # -------------------------------------------------------------------------
   cleanup-registry:
@@ -83,27 +83,62 @@ jobs:
       packages: write
     
     steps:
-      # A. Purga instantánea de capas huérfanas (con formato formal de zona horaria)
-      - name: Delete untagged images and orphan cache blobs
-        uses: snok/container-retention-policy@v2
-        with:
-          account-type: personal
-          token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: fedora_atomic, fedora_atomic/cache
-          cut-off: "0 seconds ago UTC"
-          timestamp-to-use: updated_at
-          untagged-only: true
-          keep-at-least: 1
-          skip-tags: latest
+      - name: Prune untagged and old container versions via GH CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          # Función para limpiar un paquete específico en el registro del usuario
+          clean_package() {
+            local PKG_NAME=$1
+            echo "::group::Limpiando paquete: ${PKG_NAME}"
+            
+            # 1. Obtener los IDs de las versiones del paquete y sus etiquetas
+            # Si el endpoint devuelve 404 (ej. si cache aún no existe), lo ignoramos de forma segura
+            local VERSIONS
+            VERSIONS=$(gh api -H "Accept: application/vnd.github+json" \
+              "/users/${OWNER}/packages/container/${PKG_NAME}/versions?per_page=100" 2>/dev/null || echo "[]")
 
-      # B. Rotación de historial: Borra builds con más de 14 días en UTC
-      - name: Prune old dated builds (>14 days)
-        uses: snok/container-retention-policy@v2
-        with:
-          account-type: personal
-          token: ${{ secrets.GITHUB_TOKEN }}
-          image-names: fedora_atomic
-          cut-off: "14 days ago UTC"
-          timestamp-to-use: updated_at
-          keep-at-least: 5
-          skip-tags: latest
+            if [ "$VERSIONS" = "[]" ]; then
+              echo "No se encontraron versiones o el paquete ${PKG_NAME} no existe."
+              echo "::endgroup::"
+              return
+            fi
+
+            # 2. Purgar versiones que perdieron todas sus etiquetas (Untagged)
+            echo "--> Buscando imágenes sin etiquetas (untagged)..."
+            echo "${VERSIONS}" | jq -c '.[] | select(.metadata.container.tags == [])' | while read -r row; do
+              ID=$(echo "${row}" | jq -r '.id')
+              UPDATED=$(echo "${row}" | jq -r '.updated_at')
+              echo "Borrando versión untagged ID: ${ID} (Última mod: ${UPDATED})..."
+              gh api --method DELETE "/users/${OWNER}/packages/container/${PKG_NAME}/versions/${ID}" 2>/dev/null || true
+            done
+
+            # 3. Purgar versiones con etiquetas antiguas (>14 días), preservando 'latest' y reteniendo las últimas 5
+            if [ "${PKG_NAME}" = "fedora_atomic" ]; then
+              echo "--> Buscando builds inmutables antiguos (>14 días)..."
+              
+              # Calculamos fecha de corte (hace 14 días en formato ISO 8601 UTC)
+              CUTOFF_DATE=$(date -u -d "14 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-14d +"%Y-%m-%dT%H:%M:%SZ")
+              
+              # Filtramos: que tenga tags, que NO sea 'latest', y que sea más viejo que el corte
+              echo "${VERSIONS}" | jq -c --arg cutoff "${CUTOFF_DATE}" '
+                [ .[] | select(.metadata.container.tags != [] and (.metadata.container.tags | index("latest") | not) and .updated_at < $cutoff) ] 
+                | sort_by(.updated_at) 
+                | reverse 
+                | .[5:] // [] | .[]
+              ' | while read -r row; do
+                ID=$(echo "${row}" | jq -r '.id')
+                TAGS=$(echo "${row}" | jq -r '.metadata.container.tags | join(", ")')
+                echo "Borrando build antiguo ID: ${ID} [Tags: ${TAGS}]..."
+                gh api --method DELETE "/users/${OWNER}/packages/container/${PKG_NAME}/versions/${ID}" 2>/dev/null || true
+              done
+            fi
+
+            echo "::endgroup::"
+          }
+
+          # Ejecutar limpieza sobre tu imagen base y el repositorio de caché
+          clean_package "fedora_atomic"
+          # GHCR codifica las barras en la URL como %2F
+          clean_package "fedora_atomic%2Fcache"
