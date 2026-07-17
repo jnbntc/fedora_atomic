@@ -21,12 +21,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 1. Autenticación OCI temprana (Obligatorio para leer/escribir blobs en el namespace de caché)
+      # 1. Autenticación OCI temprana
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación con política de reintentos ante fallos de CDN/red (máx 3 intentos)
+      # 2. Compilación con Cache-Buster dinámico y reintentos ante fallos de CDN/red
       - name: Build OCI Image with Podman
         run: |
           DATE_TAG=$(date +%Y%m%d)
@@ -37,25 +37,22 @@ jobs:
           until [ $n -ge $max ]; do
             podman build \
               --pull=always \
+              --build-arg CACHE_BUSTER=${DATE_TAG} \
               --cache-to=${{ env.CACHE_REPO }} \
               --cache-from=${{ env.CACHE_REPO }} \
               -f Containerfile \
               -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
               -t ${{ env.IMAGE_NAME }}:${DATE_TAG} . && break
             n=$((n+1))
-            echo "::warning::Fallo en la descarga OCI. Reintentando en 15 segundos (Intento $n/$max)..."
+            echo "::warning::Fallo en la descarga OCI o CDN. Reintentando en 15 segundos (Intento $n/$max)..."
             sleep 15
           done
 
+          # Validación de integridad del artefacto antes de exportar
           podman image exists ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || exit 1
           podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 4. Despliegue de ambos tags (flotante e inmutable)
-      - name: Push Verified Image
-        run: |
-          podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
-      # 3. Escaneo no bloqueante para evitar caídas por CVEs upstream sin parche en Fedora
+      # 3. Escaneo de vulnerabilidades sobre el tarball local en el runner
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -67,7 +64,8 @@ jobs:
           scanners: 'vuln'
           severity: 'CRITICAL,HIGH'
 
-      # 4. Despliegue de la imagen final (Los blobs de caché ya fueron empujados por --cache-to en el Paso 2)
+      # 4. Despliegue unificado de tags inmutables y flotantes post-validación
       - name: Push Verified Image
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
