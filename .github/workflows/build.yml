@@ -29,7 +29,7 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación con Cache-Buster dinámico, Capabilities OCI y reintentos ante fallos
+      # 2. Compilación con Cache-Buster dinámico, desconfinamiento OCI y reintentos ante fallos
       - name: Build OCI Image with Podman
         run: |
           DATE_TAG=$(date +%Y%m%d)
@@ -40,7 +40,9 @@ jobs:
           until [ $n -ge $max ]; do
             podman build \
               --pull=always \
-              --cap-add=AUDIT_WRITE \
+              --security-opt seccomp=unconfined \
+              --security-opt label=disable \
+              --cap-add=ALL \
               --build-arg CACHE_BUSTER=${DATE_TAG} \
               --cache-to=${{ env.CACHE_REPO }} \
               --cache-from=${{ env.CACHE_REPO }} \
@@ -48,7 +50,7 @@ jobs:
               -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
               -t ${{ env.IMAGE_NAME }}:${DATE_TAG} . && break
             n=$((n+1))
-            echo "::warning::Fallo en la descarga OCI o CDN. Reintentando en 15 segundos (Intento $n/$max)..."
+            echo "::warning::Fallo en la transacción RPM o red. Reintentando en 15 segundos (Intento $n/$max)..."
             sleep 15
           done
 
