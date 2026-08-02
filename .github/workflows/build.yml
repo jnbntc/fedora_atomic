@@ -29,7 +29,7 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación con Cache-Buster dinámico y reintentos ante fallos de CDN/red (máx 3 intentos)
+      # 2. Compilación con Cache-Buster dinámico, Capabilities OCI y reintentos ante fallos
       - name: Build OCI Image with Podman
         run: |
           DATE_TAG=$(date +%Y%m%d)
@@ -40,6 +40,7 @@ jobs:
           until [ $n -ge $max ]; do
             podman build \
               --pull=always \
+              --cap-add=AUDIT_WRITE \
               --build-arg CACHE_BUSTER=${DATE_TAG} \
               --cache-to=${{ env.CACHE_REPO }} \
               --cache-from=${{ env.CACHE_REPO }} \
@@ -94,7 +95,6 @@ jobs:
             echo "::group::Limpiando paquete: ${PKG_NAME}"
             
             # 1. Obtener los IDs de las versiones del paquete y sus etiquetas
-            # Si el endpoint devuelve 404 (ej. si cache aún no existe), lo ignoramos de forma segura
             local VERSIONS
             VERSIONS=$(gh api -H "Accept: application/vnd.github+json" \
               "/users/${OWNER}/packages/container/${PKG_NAME}/versions?per_page=100" 2>/dev/null || echo "[]")
@@ -118,10 +118,8 @@ jobs:
             if [ "${PKG_NAME}" = "fedora_atomic" ]; then
               echo "--> Buscando builds inmutables antiguos (>14 días)..."
               
-              # Calculamos fecha de corte (hace 14 días en formato ISO 8601 UTC)
               CUTOFF_DATE=$(date -u -d "14 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-14d +"%Y-%m-%dT%H:%M:%SZ")
               
-              # Filtramos: que tenga tags, que NO sea 'latest', y que sea más viejo que el corte
               echo "${VERSIONS}" | jq -c --arg cutoff "${CUTOFF_DATE}" '
                 [ .[] | select(.metadata.container.tags != [] and (.metadata.container.tags | index("latest") | not) and .updated_at < $cutoff) ] 
                 | sort_by(.updated_at) 
@@ -138,7 +136,5 @@ jobs:
             echo "::endgroup::"
           }
 
-          # Ejecutar limpieza sobre tu imagen base y el repositorio de caché
           clean_package "fedora_atomic"
-          # GHCR codifica las barras en la URL como %2F
           clean_package "fedora_atomic%2Fcache"
