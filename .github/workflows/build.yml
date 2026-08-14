@@ -29,10 +29,11 @@ jobs:
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación con Cache-Buster dinámico, desconfinamiento OCI y reintentos ante fallos
+      # 2. Compilación con Cache-Buster dinámico, etiquetas OCI y reintentos
       - name: Build OCI Image with Podman
         run: |
           DATE_TAG=$(date +%Y%m%d)
+          EPOCH_TIME=$(date +%s)
           echo "DATE_TAG=${DATE_TAG}" >> $GITHUB_ENV
 
           n=0
@@ -43,7 +44,9 @@ jobs:
               --security-opt seccomp=unconfined \
               --security-opt label=disable \
               --cap-add=ALL \
-              --build-arg CACHE_BUSTER=${DATE_TAG} \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
+              --build-arg CACHE_BUSTER=${EPOCH_TIME} \
               --cache-to=${{ env.CACHE_REPO }} \
               --cache-from=${{ env.CACHE_REPO }} \
               -f Containerfile \
@@ -56,9 +59,11 @@ jobs:
 
           # Validación de integridad del artefacto antes de exportar
           podman image exists ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || exit 1
-          podman save -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          
+          # Exportación acelerada en formato OCI Archive para mitigar sobrecarga de I/O en GitHub Actions
+          podman save --format oci-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-      # 3. Escaneo de vulnerabilidades no bloqueante sobre el tarball local en el runner
+      # 3. Escaneo de vulnerabilidades no bloqueante sobre el archivo OCI Archive local
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
         with:
@@ -91,21 +96,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
         run: |
-          # Función para limpiar un paquete específico en el registro del usuario
           clean_package() {
             local PKG_NAME=$1
             echo "::group::Limpiando paquete: ${PKG_NAME}"
             
-            # 1. Obtener los IDs de las versiones del paquete y sus etiquetas
+            # 1. Obtener los IDs (Con paginación forzada para evitar el punto ciego de los 100 registros)
             local VERSIONS
-            VERSIONS=$(gh api -H "Accept: application/vnd.github+json" \
+            VERSIONS=$(gh api --paginate -H "Accept: application/vnd.github+json" \
               "/users/${OWNER}/packages/container/${PKG_NAME}/versions?per_page=100" 2>/dev/null || echo "[]")
 
-            if [ "$VERSIONS" = "[]" ]; then
+            if [ "$VERSIONS" = "[]" ] || [ -z "$VERSIONS" ]; then
               echo "No se encontraron versiones o el paquete ${PKG_NAME} no existe."
               echo "::endgroup::"
               return
             fi
+
+            # Normalizar múltiples páginas devueltas por la API en un solo array de JSON
+            VERSIONS=$(echo "${VERSIONS}" | jq -s 'flatten')
 
             # 2. Purgar versiones que perdieron todas sus etiquetas (Untagged)
             echo "--> Buscando imágenes sin etiquetas (untagged)..."
