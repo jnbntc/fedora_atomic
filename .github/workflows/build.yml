@@ -61,8 +61,8 @@ jobs:
           podman image exists ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || exit 1
           
           # Exportación acelerada en formato OCI Archive para mitigar sobrecarga de I/O en GitHub Actions
-          podman save --format oci-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
+          # podman save --format oci-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          podman save --format docker-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
       # 3. Escaneo de vulnerabilidades no bloqueante sobre el archivo OCI Archive local
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master
