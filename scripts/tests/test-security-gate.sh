@@ -101,7 +101,15 @@ if bash "$EVALUATOR" "$invalid_report" "$POLICY" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "OK: Fedora advisory gate bloquea Critical/Important y permite Moderate/Low."
+invalid_policy="${TMP_DIR}/invalid-policy.json"
+jq '.advisory_severities += ["critical"]' "$POLICY" >"$invalid_policy"
+
+if bash "$EVALUATOR" "$empty_report" "$invalid_policy" >/dev/null 2>&1; then
+  echo "FAIL: el gate aceptó una política con severidades superpuestas" >&2
+  exit 1
+fi
+
+echo "OK: Fedora advisory gate bloquea Critical/Important, permite Moderate/Low y valida la política."
 
 
 # ---------------------------------------------------------------------------
