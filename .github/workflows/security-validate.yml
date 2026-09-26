@@ -1,0 +1,38 @@
+name: Security Pipeline Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build.yml
+      - .github/workflows/security-validate.yml
+      - security/**
+      - scripts/security/**
+      - scripts/tests/test-security-gate.sh
+
+jobs:
+  validate-security-pipeline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bash syntax
+        run: |
+          bash -n scripts/security/evaluate-grype.sh
+          bash -n scripts/tests/test-security-gate.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/security/evaluate-grype.sh
+          shellcheck scripts/tests/test-security-gate.sh
+
+      - name: Validate policy JSON
+        run: jq -e . security/vulnerability-policy.json >/dev/null
+
+      - name: Unit tests
+        run: bash scripts/tests/test-security-gate.sh
