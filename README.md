@@ -36,7 +36,30 @@ La retención del registro está desacoplada del build y se gestiona mediante `.
 * **Retención:** elimina versiones `untagged`; para `fedora_atomic` conserva `latest`, todos los builds etiquetados de los últimos 14 días y además los 5 builds antiguos más recientes. Para `fedora_atomic/cache`, conserva todas las versiones etiquetadas de los últimos 14 días y garantiza un piso de 100 versiones etiquetadas recientes; las versiones de cache más antiguas que ambos límites se purgan.
 * **Validación:** cada PR que modifica esta lógica ejecuta `bash -n`, ShellCheck y pruebas unitarias con un `gh` simulado, sin tocar GHCR.
 
-### 3. Nivel CD: Local Staging
+### 3. Configuración declarativa del rootfs
+La configuración propia del sistema ya no se genera mediante `echo` dentro del `Containerfile`. Se versiona directamente bajo `files/etc/` y se incorpora a la imagen mediante `COPY`.
+
+Actualmente el árbol incluye:
+
+```text
+files/etc/
+├── modprobe.d/iwlwifi.conf
+├── profile.d/vscode-tune.sh
+├── skel/.config/Code/User/settings.json
+├── sysctl.d/99-ai-zram-tuning.conf
+├── systemd/zram-generator.conf.d/ai-workload.conf
+├── tmpfiles.d/lenovo-conservation.conf
+├── udev/rules.d/99-battery.rules
+└── yum.repos.d/vscode.repo
+```
+
+`vscode.repo` se copia antes de la transacción `rpm-ostree` porque es necesario para instalar VS Code; el árbol completo `files/etc/` se copia después de instalar paquetes para que cambios de configuración no invaliden innecesariamente la capa pesada de paquetes.
+
+Los symlinks de servicios habilitados permanecen por ahora explícitos en el `Containerfile`: son estado de activación de systemd, no archivos regulares, y se migrarán solo si podemos conservar exactamente su semántica.
+
+La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
+
+### 4. Nivel CD: Local Staging
 El host local (notebook) opera como un nodo pasivo de consumo.
 * **Staging Asíncrono:** a través de un *drop-in* de Systemd (`rpm-ostreed-automatic.timer`), el host descarga los deltas diariamente a la 01:00 AM (o al encenderse vía `Persistent=true`) y pre-ensambla el árbol en disco (`AutomaticUpdatePolicy=stage`).
 * **RAM Optimization:** `rpm-ostreed.conf` forzado a `IdleExitTimeout=60` para evicción estricta de memoria, liberando recursos para cargas locales (LLMs y telemetría).
