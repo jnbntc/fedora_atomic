@@ -72,7 +72,7 @@ El host local (notebook) opera como un nodo pasivo de consumo.
 Paquetes y servicios inyectados nativamente en la compilación remota. El host no gasta ciclos de CPU en resolver este stack:
 * **Infraestructura y Redes:** `tailscale` (VPN + nodo de salida).
 * **Telemetría y Gestión:** suite `cockpit` (system/podman/machines), `btop`.
-* **Desarrollo y Contenedores:** `distrobox`, `tmux`, `zsh`, `code`, `starship`, `fira-code-fonts`, `jetbrains-mono-fonts`.
+* **Desarrollo y Contenedores:** `distrobox`, `tmux`, `zsh`, `code`, `starship` (binario upstream pinneado y verificado por SHA-256), `fira-code-fonts`, `jetbrains-mono-fonts`.
 * **Aceleración Gráfica (OpenCL/VAAPI):** `intel-compute-runtime`, `libva-intel-media-driver`, `oneapi-level-zero`, `intel-gpu-tools`, `clinfo`, `vulkan-tools`.
 * **Virtualización y QA:** `virt-manager`, `libvirt-daemon-kvm`, `libvirt-client`, `swtpm`, `qemu-system-x86`, `edk2-ovmf`, `evtest`.
 * **Backup:** `restic`.
