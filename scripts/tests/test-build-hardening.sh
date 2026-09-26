@@ -4,8 +4,23 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-grep -Fq "        starship && \\" Containerfile || {
-  echo "FAIL: starship no está en la transacción rpm-ostree" >&2
+grep -Fq 'ARG STARSHIP_VERSION=1.26.0' Containerfile || {
+  echo "FAIL: falta versión pinneada de Starship" >&2
+  exit 1
+}
+
+grep -Fq 'ARG STARSHIP_SHA256=321f0dd7af8340a5f2e6a8fec6538a04f617486f9ec70d878f91c09cd8deef22' Containerfile || {
+  echo "FAIL: falta checksum pinneado de Starship" >&2
+  exit 1
+}
+
+grep -Fq "sha256sum -c -" Containerfile || {
+  echo "FAIL: Starship se descarga sin validar SHA-256" >&2
+  exit 1
+}
+
+grep -Fq '/usr/bin/starship --version' Containerfile || {
+  echo "FAIL: falta smoke check del binario Starship" >&2
   exit 1
 }
 
