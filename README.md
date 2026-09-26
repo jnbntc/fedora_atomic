@@ -33,7 +33,7 @@ La retención del registro está desacoplada del build y se gestiona mediante `.
 * **Schedule:** domingo 04:37 UTC / 01:37 ART.
 * **Manual:** `workflow_dispatch`, con `dry-run` como opción predeterminada.
 * **Seguridad:** el script usa `set -Eeuo pipefail`, diferencia un `404` de otros errores de API y no oculta fallos de autenticación o del backend.
-* **Retención:** elimina versiones `untagged`; para `fedora_atomic` conserva `latest`, todos los builds etiquetados de los últimos 14 días y además los 5 builds antiguos más recientes.
+* **Retención:** elimina versiones `untagged`; para `fedora_atomic` conserva `latest`, todos los builds etiquetados de los últimos 14 días y además los 5 builds antiguos más recientes. Para `fedora_atomic/cache`, conserva todas las versiones etiquetadas de los últimos 14 días y garantiza un piso de 100 versiones etiquetadas recientes; las versiones de cache más antiguas que ambos límites se purgan.
 * **Validación:** cada PR que modifica esta lógica ejecuta `bash -n`, ShellCheck y pruebas unitarias con un `gh` simulado, sin tocar GHCR.
 
 ### 3. Nivel CD: Local Staging
