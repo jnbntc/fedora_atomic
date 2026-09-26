@@ -1,4 +1,4 @@
-name: Fedora Atomic Core - Build & SecScan
+name: Fedora Atomic Core - Build & Security Gate
 
 on:
   push:
@@ -24,9 +24,6 @@ env:
   IMAGE_TAG: latest
 
 jobs:
-  # -------------------------------------------------------------------------
-  # BUILD: COMPILACIÓN, EVIDENCIA DE SEGURIDAD, GATE Y PUBLICACIÓN
-  # -------------------------------------------------------------------------
   build-scan-push:
     runs-on: ubuntu-latest
     permissions:
@@ -37,12 +34,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # 1. Autenticación OCI temprana
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # 2. Compilación con cache-buster diario, etiquetas OCI y reintentos
       - name: Build OCI Image with Podman
         shell: bash
         run: |
@@ -84,9 +79,7 @@ jobs:
 
           podman image exists "${IMAGE_NAME}:${IMAGE_TAG}"
 
-      # 3. Exportamos el rootfs real. El docker-archive anterior no exponía
-      #    correctamente la semántica Fedora/OSTree a los scanners.
-      - name: Export Squashed Rootfs
+      - name: Export squashed rootfs
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -94,15 +87,14 @@ jobs:
           cid="$(podman create "${IMAGE_NAME}:${IMAGE_TAG}")"
           trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 
+          rm -rf rootfs security-evidence
           mkdir -p rootfs security-evidence
           podman export "$cid" | tar -x -C rootfs
 
           test -f rootfs/usr/lib/os-release
           test -f rootfs/usr/share/rpm/rpmdb.sqlite
 
-      # 4. SBOM reproducible: Syft queda pinneado y una única catalogación
-      #    genera los dos formatos estándar que conservamos como evidencia.
-      - name: Download Pinned Syft
+      - name: Download pinned Syft
         id: syft
         uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
@@ -126,59 +118,55 @@ jobs:
           rpm_packages="$(
             jq '[
               .packages[]?
-              | select(any(.externalRefs[]?;
-                  .referenceType == "purl"
-                  and (.referenceLocator | startswith("pkg:rpm/"))
-                ))
+              | select(
+                  any(
+                    .externalRefs[]?;
+                    .referenceType == "purl"
+                    and (.referenceLocator | startswith("pkg:rpm/"))
+                  )
+                )
             ] | length' security-evidence/sbom.spdx.json
           )"
 
-          echo "RPM packages cataloged by Syft: ${rpm_packages}"
+          echo "RPM packages in SBOM: ${rpm_packages}"
           (( rpm_packages > 0 ))
 
-          {
-            echo "### SBOM"
-            echo
-            echo "- SPDX packages: **$(jq '.packages | length' security-evidence/sbom.spdx.json)**"
-            echo "- RPM packages: **${rpm_packages}**"
-            echo "- CycloneDX components: **$(jq '.components | length' security-evidence/sbom.cyclonedx.json)**"
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      # 5. Grype complementa el gate Fedora con visibilidad de dependencias
-      #    embebidas (Go/Python/CPE). No decide si se publica la imagen.
-      - name: Grype Dependency Scan (advisory)
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+      - name: Download pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          sbom: security-evidence/sbom.spdx.json
-          fail-build: false
-          output-format: json
-          output-file: security-evidence/grype-advisory.json
-          by-cve: true
-          cache-db: true
           grype-version: v0.119.0
+          cache-db: true
 
-      - name: Summarize Grype Advisory Scan
+      - name: Grype advisory scan of rootfs
         shell: bash
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
         run: |
           set -Eeuo pipefail
 
-          total="$(jq '.matches | length' security-evidence/grype-advisory.json)"
-          critical="$(jq '[.matches[]? | select(.vulnerability.severity == "Critical")] | length' security-evidence/grype-advisory.json)"
-          high="$(jq '[.matches[]? | select(.vulnerability.severity == "High")] | length' security-evidence/grype-advisory.json)"
+          "${{ steps.grype.outputs.cmd }}" dir:rootfs \
+            --by-cve \
+            --output json \
+            --file security-evidence/grype-advisory.json
 
-          {
-            echo "### Grype complementary scan"
-            echo
-            echo "- Total matches: **${total}**"
-            echo "- Critical: **${critical}**"
-            echo "- High: **${high}**"
-            echo
-            echo "_Este reporte es advisory para dependencias embebidas; el gate del SO usa metadata nativa de Fedora._"
-          } >> "${GITHUB_STEP_SUMMARY}"
+          jq -e '.distro.name == "fedora" and .distro.version == "44"' \
+            security-evidence/grype-advisory.json >/dev/null
 
-      # 6. Gate Fedora-native: consultamos updateinfo/advisory contra el rpmdb
-      #    exacto de la imagen construida. Critical e Important bloquean.
-      - name: Query Fedora Security Advisories
+          jq '{
+            distro: .distro,
+            total_matches: (.matches | length),
+            by_severity: (
+              [.matches[]?.vulnerability.severity]
+              | group_by(.)
+              | map({key: .[0], value: length})
+              | from_entries
+            ),
+            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
+          }' security-evidence/grype-advisory.json \
+            | tee security-evidence/grype-summary.json
+
+      - name: Query Fedora native security advisories
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -198,7 +186,6 @@ jobs:
               [[ "$ID" == "$EXPECTED_NAME" ]]
               [[ "$VERSION_ID" == "$EXPECTED_VERSION" ]]
               test -f /usr/share/rpm/rpmdb.sqlite
-              command -v dnf5 >/dev/null
 
               dnf5 --refresh advisory list \
                 --available \
@@ -207,27 +194,41 @@ jobs:
                 --json > /evidence/fedora-security-advisories.json
             '
 
-      # La evidencia se conserva incluso si el gate siguiente decide bloquear.
-      - name: Upload Security Evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          jq -e 'type == "array"' security-evidence/fedora-security-advisories.json >/dev/null
+
+      - name: Evaluate Fedora security gate
+        id: fedora_gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/security/evaluate-fedora-advisories.sh \
+            security-evidence/fedora-security-advisories.json \
+            security/vulnerability-policy.json \
+            2>&1 | tee security-evidence/fedora-security-gate.txt
+
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: security-evidence-${{ github.sha }}-${{ github.run_attempt }}
+          name: fedora-atomic-security-${{ github.sha }}
           path: |
             security-evidence/sbom.spdx.json
             security-evidence/sbom.cyclonedx.json
             security-evidence/grype-advisory.json
+            security-evidence/grype-summary.json
             security-evidence/fedora-security-advisories.json
+            security-evidence/fedora-security-gate.txt
           retention-days: 30
-          if-no-files-found: error
+          if-no-files-found: warn
+          compression-level: 6
 
-      - name: Enforce Fedora Security Gate
-        shell: bash
+      - name: Enforce Fedora security gate
+        if: steps.fedora_gate.outcome == 'failure'
         run: |
-          bash scripts/security/evaluate-fedora-advisories.sh \
-            security-evidence/fedora-security-advisories.json \
-            security/vulnerability-policy.json
+          echo "::error::El gate de seguridad Fedora bloqueó la publicación. Revisar el artefacto fedora-atomic-security-${{ github.sha }}."
+          exit 1
 
-      # 7. Solo una imagen que pasó el gate puede publicarse.
       - name: Push Built Image
         if: github.ref == 'refs/heads/main'
         run: |
