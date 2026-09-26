@@ -1,0 +1,83 @@
+name: GHCR Weekly Cleanup
+
+on:
+  schedule:
+    - cron: '37 4 * * 0' # Domingo 04:37 UTC / 01:37 ART
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Modo de ejecución'
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cleanup.yml
+      - scripts/cleanup-ghcr.sh
+      - scripts/tests/test-cleanup-ghcr.sh
+
+concurrency:
+  group: ghcr-cleanup-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate cleanup logic
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bash syntax
+        run: |
+          bash -n scripts/cleanup-ghcr.sh
+          bash -n scripts/tests/test-cleanup-ghcr.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/cleanup-ghcr.sh
+          shellcheck scripts/tests/test-cleanup-ghcr.sh
+
+      - name: Unit tests
+        run: bash scripts/tests/test-cleanup-ghcr.sh
+
+  cleanup:
+    name: Cleanup GHCR
+    needs: validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve cleanup mode
+        id: mode
+        shell: bash
+        run: |
+          mode="--dry-run"
+
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            mode="--apply"
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.mode }}" == "apply" ]]; then
+            mode="--apply"
+          fi
+
+          echo "arg=${mode}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run GHCR cleanup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: bash scripts/cleanup-ghcr.sh "${{ steps.mode.outputs.arg }}"
