@@ -47,7 +47,7 @@ jobs:
           shellcheck scripts/tests/test-cleanup-ghcr.sh
 
       - name: Unit tests
-        run: scripts/tests/test-cleanup-ghcr.sh
+        run: bash scripts/tests/test-cleanup-ghcr.sh
 
   cleanup:
     name: Cleanup GHCR
@@ -80,5 +80,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
-        run: |
-          scripts/cleanup-ghcr.sh "${{ steps.mode.outputs.arg }}"
+        run: bash scripts/cleanup-ghcr.sh "${{ steps.mode.outputs.arg }}"
