@@ -6,6 +6,8 @@ RETENTION_DAYS=14
 KEEP_OLD_TAGGED=5
 OWNER="${OWNER:-${GITHUB_REPOSITORY_OWNER:-}}"
 PACKAGES=()
+PLANNED=0
+APPLIED=0
 
 log()  { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
@@ -46,7 +48,7 @@ fetch_versions() {
 
   err_file="$(mktemp)"
 
-  if ! raw="$(gh api --paginate       -H "Accept: application/vnd.github+json"       "$endpoint" 2>"$err_file")"; then
+  if ! raw="$(gh api --paginate -H "Accept: application/vnd.github+json" "$endpoint" 2>"$err_file")"; then
     if grep -q 'HTTP 404' "$err_file"; then
       warn "El paquete ${package} no existe o no es visible para este token."
       rm -f "$err_file"
@@ -85,6 +87,7 @@ delete_version() {
   fi
 
   err_file="$(mktemp)"
+
   if gh api --method DELETE "$endpoint" >/dev/null 2>"$err_file"; then
     APPLIED=$((APPLIED + 1))
     log "Eliminada ${package} version=${id} (${description})"
@@ -120,7 +123,6 @@ clean_package() {
 
   log "Versiones encontradas: ${count}"
 
-  # Todas las versiones sin tags son candidatas a purga.
   mapfile -t rows < <(
     jq -r '
       .[]
@@ -135,7 +137,6 @@ clean_package() {
     delete_version "$package" "$id" "untagged, updated=${updated}"
   done
 
-  # La política de retención de builds etiquetados aplica solo a la imagen principal.
   if [[ "$package" != "fedora_atomic" ]]; then
     return 0
   fi
@@ -221,9 +222,6 @@ if [[ ${#PACKAGES[@]} -eq 0 ]]; then
   PACKAGES=("fedora_atomic" "fedora_atomic%2Fcache")
 fi
 
-PLANNED=0
-APPLIED=0
-
 if (( DRY_RUN )); then
   log "Modo DRY-RUN: no se borrará nada."
 else
@@ -234,4 +232,10 @@ for package in "${PACKAGES[@]}"; do
   clean_package "$package"
 done
 
-log "Resumen: candidatas=${PLANNED}, eliminadas=${APPLIED}, modo=$([[ "$DRY_RUN" -eq 1 ]] && printf 'dry-run' || printf 'apply')"
+if (( DRY_RUN )); then
+  mode="dry-run"
+else
+  mode="apply"
+fi
+
+log "Resumen: candidatas=${PLANNED}, eliminadas=${APPLIED}, modo=${mode}"
