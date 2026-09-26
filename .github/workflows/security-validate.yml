@@ -23,12 +23,12 @@ jobs:
 
       - name: Bash syntax
         run: |
-          bash -n scripts/security/evaluate-grype.sh
+          bash -n scripts/security/evaluate-fedora-advisories.sh
           bash -n scripts/tests/test-security-gate.sh
 
       - name: ShellCheck
         run: |
-          shellcheck scripts/security/evaluate-grype.sh
+          shellcheck scripts/security/evaluate-fedora-advisories.sh
           shellcheck scripts/tests/test-security-gate.sh
 
       - name: Validate policy JSON
