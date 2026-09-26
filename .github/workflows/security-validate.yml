@@ -32,7 +32,46 @@ jobs:
           shellcheck scripts/tests/test-security-gate.sh
 
       - name: Validate policy JSON
-        run: jq -e . security/vulnerability-policy.json >/dev/null
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jq -e '
+            .schema_version == 1
+            and .engine == "dnf5-advisory"
+            and .expected_distro.name == "fedora"
+            and .expected_distro.version == "44"
+            and .scope.mode == "available"
+            and .scope.type == "security"
+            and (.block_severities | map(ascii_downcase) | sort) == ["critical", "important"]
+            and (.advisory_severities | map(ascii_downcase) | sort) == ["low", "moderate"]
+          ' security/vulnerability-policy.json >/dev/null
 
       - name: Unit tests
         run: bash scripts/tests/test-security-gate.sh
+
+      - name: Validate pipeline contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          workflow=".github/workflows/build.yml"
+
+          if grep -Fq 'aquasecurity/trivy-action' "$workflow"; then
+            echo "FAIL: Trivy volvió al workflow principal pese a no soportar Fedora 44 en este pipeline" >&2
+            exit 1
+          fi
+
+          grep -Fq 'anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26' "$workflow"
+          grep -Fq 'anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439' "$workflow"
+          grep -Fq 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' "$workflow"
+
+          grep -Fq 'syft-version: v1.52.0' "$workflow"
+          grep -Fq 'grype-version: v0.119.0' "$workflow"
+          grep -Fq 'dnf5 --refresh advisory list' "$workflow"
+          grep -Fq -- '--available' "$workflow"
+          grep -Fq -- '--security' "$workflow"
+          grep -Fq 'scripts/security/evaluate-fedora-advisories.sh' "$workflow"
+          grep -Fq "if: steps.fedora_gate.outcome == 'failure'" "$workflow"
+          grep -Fq "if: github.ref == 'refs/heads/main'" "$workflow"
+
+          echo "OK: contrato estático del pipeline de seguridad validado."
