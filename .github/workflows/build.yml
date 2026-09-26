@@ -11,18 +11,6 @@ on:
   schedule:
     - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
-    inputs:
-      privilege_profile:
-        description: 'Perfil de privilegios para sondeo manual'
-        required: true
-        default: stable
-        type: choice
-        options:
-          - stable
-          - no-cap-all
-          - no-seccomp-unconfined
-          - no-label-disable
-          - podman-defaults
 
 concurrency:
   group: fedora-atomic-${{ github.workflow }}-${{ github.ref }}
@@ -64,51 +52,11 @@ jobs:
             cache_args+=(--cache-to="${CACHE_REPO}")
           fi
 
-          privilege_profile="${{ github.event_name == 'workflow_dispatch' && inputs.privilege_profile || 'stable' }}"
-          security_args=()
-
-          case "${privilege_profile}" in
-            stable)
-              security_args=(
-                --security-opt seccomp=unconfined
-                --security-opt label=disable
-                --cap-add=ALL
-              )
-              ;;
-            no-cap-all)
-              security_args=(
-                --security-opt seccomp=unconfined
-                --security-opt label=disable
-              )
-              ;;
-            no-seccomp-unconfined)
-              security_args=(
-                --security-opt label=disable
-                --cap-add=ALL
-              )
-              ;;
-            no-label-disable)
-              security_args=(
-                --security-opt seccomp=unconfined
-                --cap-add=ALL
-              )
-              ;;
-            podman-defaults)
-              ;;
-            *)
-              echo "::error::Perfil de privilegios desconocido: ${privilege_profile}"
-              exit 2
-              ;;
-          esac
-
-          echo "Privilege profile: ${privilege_profile}"
-
           n=0
           max=3
           until [ $n -ge $max ]; do
             podman build \
               --pull=always \
-              "${security_args[@]}" \
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
               --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
