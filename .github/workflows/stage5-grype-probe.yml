@@ -1,0 +1,97 @@
+name: Stage 5 Grype Fedora Probe
+
+on:
+  push:
+    branches:
+      - security/stage-5-sbom-rootfs
+    paths:
+      - .github/workflows/stage5-grype-probe.yml
+
+concurrency:
+  group: stage5-grype-fedora-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull current production image
+        run: podman pull ghcr.io/${{ github.repository_owner }}/fedora_atomic:latest
+
+      - name: Export squashed rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cid="$(podman create ghcr.io/${{ github.repository_owner }}/fedora_atomic:latest)"
+          trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p rootfs
+          podman export "$cid" | tar -x -C rootfs
+          test -f rootfs/usr/share/rpm/rpmdb.sqlite
+
+      - name: Generate SPDX SBOM from rootfs
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: rootfs
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Scan SBOM with Grype
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: sbom.spdx.json
+          fail-build: false
+          output-format: json
+          output-file: grype-report.json
+          by-cve: true
+          cache-db: true
+
+      - name: Summarize Fedora vulnerability coverage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jq '{
+            distro: .distro,
+            total_matches: (.matches | length),
+            by_severity: {
+              critical: ([.matches[]? | select(.vulnerability.severity == "Critical")] | length),
+              high: ([.matches[]? | select(.vulnerability.severity == "High")] | length),
+              medium: ([.matches[]? | select(.vulnerability.severity == "Medium")] | length),
+              low: ([.matches[]? | select(.vulnerability.severity == "Low")] | length),
+              negligible: ([.matches[]? | select(.vulnerability.severity == "Negligible")] | length),
+              unknown: ([.matches[]? | select(.vulnerability.severity == "Unknown")] | length)
+            },
+            fixed: {
+              critical: ([.matches[]? | select(.vulnerability.severity == "Critical" and .vulnerability.fix.state == "fixed")] | length),
+              high: ([.matches[]? | select(.vulnerability.severity == "High" and .vulnerability.fix.state == "fixed")] | length)
+            },
+            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
+          }' grype-report.json
+
+          echo '--- fixable HIGH/CRITICAL ---'
+          jq -r '
+            .matches[]?
+            | select(
+                (.vulnerability.severity == "Critical" or .vulnerability.severity == "High")
+                and .vulnerability.fix.state == "fixed"
+              )
+            | [
+                .vulnerability.severity,
+                .vulnerability.id,
+                .artifact.name,
+                .artifact.version,
+                (.vulnerability.fix.versions | join(","))
+              ]
+            | @tsv
+          ' grype-report.json | sort -u | head -100
