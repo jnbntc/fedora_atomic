@@ -47,6 +47,11 @@ jobs:
           CACHE_BUSTER="${DATE_TAG}"
           echo "DATE_TAG=${DATE_TAG}" >> "${GITHUB_ENV}"
 
+          cache_args=(--cache-from="${CACHE_REPO}")
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            cache_args+=(--cache-to="${CACHE_REPO}")
+          fi
+
           n=0
           max=3
           until [ $n -ge $max ]; do
@@ -58,8 +63,7 @@ jobs:
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
               --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
-              --cache-to=${{ env.CACHE_REPO }} \
-              --cache-from=${{ env.CACHE_REPO }} \
+              "${cache_args[@]}" \
               -f Containerfile \
               -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
               -t ${{ env.IMAGE_NAME }}:${DATE_TAG} . && break
