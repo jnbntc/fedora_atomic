@@ -1,9 +1,21 @@
 name: Fedora Atomic Core - Build & SecScan
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - Containerfile
+      - .github/workflows/build.yml
+      - files/**
+      - scripts/**
   schedule:
-    - cron: '0 22 * * *' # 22:00 UTC / 19:00 ART
+    - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
+
+concurrency:
+  group: fedora-atomic-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fedora_atomic
@@ -22,19 +34,19 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # 1. Autenticación OCI temprana
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
 
-      # 2. Compilación con Cache-Buster dinámico, etiquetas OCI y reintentos
+      # 2. Compilación con Cache-Buster diario, etiquetas OCI y reintentos
       - name: Build OCI Image with Podman
         run: |
-          DATE_TAG=$(date +%Y%m%d)
-          EPOCH_TIME=$(date +%s)
-          echo "DATE_TAG=${DATE_TAG}" >> $GITHUB_ENV
+          DATE_TAG=$(date -u +%Y%m%d)
+          CACHE_BUSTER="${DATE_TAG}"
+          echo "DATE_TAG=${DATE_TAG}" >> "${GITHUB_ENV}"
 
           n=0
           max=3
@@ -46,7 +58,7 @@ jobs:
               --cap-add=ALL \
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
-              --build-arg CACHE_BUSTER=${EPOCH_TIME} \
+              --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
               --cache-to=${{ env.CACHE_REPO }} \
               --cache-from=${{ env.CACHE_REPO }} \
               -f Containerfile \
@@ -59,13 +71,14 @@ jobs:
 
           # Validación de integridad del artefacto antes de exportar
           podman image exists ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || exit 1
-          
-          # Exportación acelerada en formato OCI Archive para mitigar sobrecarga de I/O en GitHub Actions
-          # podman save --format oci-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+          # Exportación temporal para el escaneo local
           podman save --format docker-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-      # 3. Escaneo de vulnerabilidades no bloqueante sobre el archivo OCI Archive local
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@master
+
+      # 3. Escaneo advisory actual. En Etapa 5 se reemplazará por validación
+      #    compatible con Fedora/OSTree + SBOM y política de bloqueo explícita.
+      - name: Run Trivy Vulnerability Scanner (advisory)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           input: 'fedora-atomic.tar'
           format: 'table'
@@ -75,21 +88,24 @@ jobs:
           scanners: 'vuln'
           severity: 'CRITICAL,HIGH'
 
-      # 4. Despliegue unificado de tags inmutables y flotantes post-validación
-      - name: Push Verified Image
+      # 4. Despliegue unificado de tags inmutables y flotantes post-build
+      - name: Push Built Image
+        if: github.ref == 'refs/heads/main'
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
 
   # -------------------------------------------------------------------------
   # JOB 2: LIMPIEZA ASÍNCRONA DEL REGISTRO (RETENCIÓN Y PURGA)
+  # Etapa 2: se separará en su propio workflow semanal.
   # -------------------------------------------------------------------------
   cleanup-registry:
     needs: build-scan-push
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    
+
     steps:
       - name: Prune untagged and old container versions via GH CLI
         env:
@@ -99,7 +115,7 @@ jobs:
           clean_package() {
             local PKG_NAME=$1
             echo "::group::Limpiando paquete: ${PKG_NAME}"
-            
+
             # 1. Obtener los IDs (Con paginación forzada para evitar el punto ciego de los 100 registros)
             local VERSIONS
             VERSIONS=$(gh api --paginate -H "Accept: application/vnd.github+json" \
@@ -126,13 +142,13 @@ jobs:
             # 3. Purgar versiones con etiquetas antiguas (>14 días), preservando 'latest' y reteniendo las últimas 5
             if [ "${PKG_NAME}" = "fedora_atomic" ]; then
               echo "--> Buscando builds inmutables antiguos (>14 días)..."
-              
+
               CUTOFF_DATE=$(date -u -d "14 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-14d +"%Y-%m-%dT%H:%M:%SZ")
-              
+
               echo "${VERSIONS}" | jq -c --arg cutoff "${CUTOFF_DATE}" '
-                [ .[] | select(.metadata.container.tags != [] and (.metadata.container.tags | index("latest") | not) and .updated_at < $cutoff) ] 
-                | sort_by(.updated_at) 
-                | reverse 
+                [ .[] | select(.metadata.container.tags != [] and (.metadata.container.tags | index("latest") | not) and .updated_at < $cutoff) ]
+                | sort_by(.updated_at)
+                | reverse
                 | .[5:] // [] | .[]
               ' | while read -r row; do
                 ID=$(echo "${row}" | jq -r '.id')
