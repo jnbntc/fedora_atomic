@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-grep -Fq '        starship && \' Containerfile || {
+grep -Fq "        starship && \\" Containerfile || {
   echo "FAIL: starship no está en la transacción rpm-ostree" >&2
   exit 1
 }
@@ -27,9 +27,9 @@ done
 grep -Fq -- '--security-opt seccomp=unconfined' "$workflow"
 grep -Fq -- '--security-opt label=disable' "$workflow"
 grep -Fq -- '--cap-add=ALL' "$workflow"
-grep -Fq -- '"${security_args[@]}"' "$workflow"
+grep -Fq "\"\${security_args[@]}\"" "$workflow"
 
-grep -Fq 'if [[ "${GITHUB_REF}" == "refs/heads/main" ]]' "$workflow" || {
+grep -Fq "if [[ \"\${GITHUB_REF}\" == \"refs/heads/main\" ]]" "$workflow" || {
   echo "FAIL: cache remoto no está restringido a main" >&2
   exit 1
 }
