@@ -31,18 +31,18 @@ fi
 
 workflow=".github/workflows/build.yml"
 
-for profile in   stable   no-cap-all   no-seccomp-unconfined   no-label-disable   podman-defaults
+for forbidden in   '--cap-add=ALL'   '--security-opt seccomp=unconfined'   '--security-opt label=disable'
 do
-  grep -Fq "$profile" "$workflow" || {
-    echo "FAIL: falta privilege_profile=$profile" >&2
+  if grep -Fq -- "$forbidden" "$workflow"; then
+    echo "FAIL: el workflow conserva privilegio innecesario: $forbidden" >&2
     exit 1
-  }
+  fi
 done
 
-grep -Fq -- '--security-opt seccomp=unconfined' "$workflow"
-grep -Fq -- '--security-opt label=disable' "$workflow"
-grep -Fq -- '--cap-add=ALL' "$workflow"
-grep -Fq "\"\${security_args[@]}\"" "$workflow"
+if grep -Fq 'security_args' "$workflow"; then
+  echo "FAIL: quedó infraestructura temporal de sondeo en build.yml" >&2
+  exit 1
+fi
 
 grep -Fq "if [[ \"\${GITHUB_REF}\" == \"refs/heads/main\" ]]" "$workflow" || {
   echo "FAIL: cache remoto no está restringido a main" >&2
@@ -54,4 +54,4 @@ grep -Fq "if: github.ref == 'refs/heads/main'" "$workflow" || {
   exit 1
 }
 
-echo "OK: hardening estático del build validado."
+echo "OK: build usa defaults de Podman y Starship pinneado/verificado."
