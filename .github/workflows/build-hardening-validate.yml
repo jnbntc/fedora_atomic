@@ -1,0 +1,30 @@
+name: Build Hardening Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Containerfile
+      - .github/workflows/build.yml
+      - .github/workflows/build-hardening-validate.yml
+      - scripts/tests/test-build-hardening.sh
+
+jobs:
+  validate-build-hardening:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bash syntax
+        run: bash -n scripts/tests/test-build-hardening.sh
+
+      - name: ShellCheck
+        run: shellcheck scripts/tests/test-build-hardening.sh
+
+      - name: Validate build hardening
+        run: bash scripts/tests/test-build-hardening.sh
