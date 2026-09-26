@@ -1,4 +1,4 @@
-name: Stage 5 Security Integration Probe
+name: Stage 5 Final Security Integration
 
 on:
   push:
@@ -8,11 +8,11 @@ on:
       - .github/workflows/stage5-probe.yml
 
 concurrency:
-  group: stage5-security-integration-probe
+  group: stage5-final-security-integration
   cancel-in-progress: false
 
 jobs:
-  probe:
+  integration:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,31 +22,29 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Validate gate unit tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n scripts/security/evaluate-fedora-advisories.sh
+          bash -n scripts/tests/test-security-gate.sh
+          shellcheck scripts/security/evaluate-fedora-advisories.sh
+          shellcheck scripts/tests/test-security-gate.sh
+          bash scripts/tests/test-security-gate.sh
+
       - name: Login to GHCR via Podman
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build probe image
-        shell: bash
-        env:
-          CACHE_REPO: ghcr.io/${{ github.repository_owner }}/fedora_atomic/cache
-        run: |
-          set -Eeuo pipefail
-
-          podman build \
-            --pull=always \
-            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
-            --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
-            --build-arg CACHE_BUSTER="${GITHUB_SHA}-stage5-integration" \
-            --cache-from="${CACHE_REPO}" \
-            -f Containerfile \
-            -t localhost/fedora-atomic-stage5:probe .
+      - name: Pull current production image
+        run: podman pull ghcr.io/${{ github.repository_owner }}/fedora_atomic:latest
 
       - name: Export squashed rootfs
         shell: bash
         run: |
           set -Eeuo pipefail
-          cid="$(podman create localhost/fedora-atomic-stage5:probe)"
+
+          cid="$(podman create ghcr.io/${{ github.repository_owner }}/fedora_atomic:latest)"
           trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
 
           mkdir -p rootfs security-evidence
@@ -65,40 +63,69 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
           "${{ steps.syft.outputs.cmd }}" dir:rootfs \
             -o spdx-json=security-evidence/sbom.spdx.json \
             -o cyclonedx-json=security-evidence/sbom.cyclonedx.json
 
           jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
             security-evidence/sbom.spdx.json >/dev/null
+
           jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' \
             security-evidence/sbom.cyclonedx.json >/dev/null
 
           rpm_packages="$(
             jq '[
               .packages[]?
-              | select(any(.externalRefs[]?;
-                  .referenceType == "purl"
-                  and (.referenceLocator | startswith("pkg:rpm/"))
-                ))
+              | select(
+                  any(
+                    .externalRefs[]?;
+                    .referenceType == "purl"
+                    and (.referenceLocator | startswith("pkg:rpm/"))
+                  )
+                )
             ] | length' security-evidence/sbom.spdx.json
           )"
 
           echo "RPM packages in SBOM: ${rpm_packages}"
           (( rpm_packages > 0 ))
 
-      - name: Grype dependency scan from SBOM
-        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+      - name: Download pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
-          sbom: security-evidence/sbom.spdx.json
-          fail-build: false
-          output-format: json
-          output-file: security-evidence/grype-advisory.json
-          by-cve: true
-          cache-db: true
           grype-version: v0.119.0
+          cache-db: true
 
-      - name: Query Fedora native advisories
+      - name: Grype advisory scan of rootfs
+        shell: bash
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: |
+          set -Eeuo pipefail
+
+          "${{ steps.grype.outputs.cmd }}" dir:rootfs \
+            --by-cve \
+            --output json \
+            --file security-evidence/grype-advisory.json
+
+          jq -e '.distro.name == "fedora" and .distro.version == "44"' \
+            security-evidence/grype-advisory.json >/dev/null
+
+          jq '{
+            distro: .distro,
+            total_matches: (.matches | length),
+            by_severity: (
+              [.matches[]?.vulnerability.severity]
+              | group_by(.)
+              | map({key: .[0], value: length})
+              | from_entries
+            ),
+            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
+          }' security-evidence/grype-advisory.json \
+            | tee security-evidence/grype-summary.json
+
+      - name: Query Fedora native security advisories
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -110,7 +137,7 @@ jobs:
             -e EXPECTED_NAME="${expected_name}" \
             -e EXPECTED_VERSION="${expected_version}" \
             -v "${PWD}/security-evidence:/evidence" \
-            localhost/fedora-atomic-stage5:probe \
+            ghcr.io/${{ github.repository_owner }}/fedora_atomic:latest \
             bash -lc '
               set -Eeuo pipefail
               . /usr/lib/os-release
@@ -127,23 +154,25 @@ jobs:
             '
 
       - name: Evaluate Fedora security gate
-        run: |
-          bash scripts/security/evaluate-fedora-advisories.sh \
-            security-evidence/fedora-security-advisories.json \
-            security/vulnerability-policy.json
-
-      - name: Summarize complementary Grype scan
         shell: bash
         run: |
           set -Eeuo pipefail
-          jq '{
-            distro: .distro,
-            total_matches: (.matches | length),
-            by_severity: (
-              [.matches[]?.vulnerability.severity]
-              | group_by(.)
-              | map({key: .[0], value: length})
-              | from_entries
-            ),
-            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
-          }' security-evidence/grype-advisory.json
+          bash scripts/security/evaluate-fedora-advisories.sh \
+            security-evidence/fedora-security-advisories.json \
+            security/vulnerability-policy.json \
+            2>&1 | tee security-evidence/fedora-security-gate.txt
+
+      - name: Upload security evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage5-security-integration-${{ github.sha }}
+          path: |
+            security-evidence/sbom.spdx.json
+            security-evidence/sbom.cyclonedx.json
+            security-evidence/grype-advisory.json
+            security-evidence/grype-summary.json
+            security-evidence/fedora-security-advisories.json
+            security-evidence/fedora-security-gate.txt
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 6
