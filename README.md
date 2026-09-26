@@ -19,11 +19,11 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 
 * **Push controlado:** cambios en `main` que afecten al `Containerfile`, al workflow de build o a futuros archivos de configuración de la imagen disparan un nuevo build.
 * **Nightly:** `cron: '17 22 * * *'` (22:17 UTC / 19:17 ART). El minuto 17 evita concentrar la ejecución exactamente al comienzo de la hora.
-* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones manuales sobre ramas distintas de `main` construyen y validan la imagen, pero no publican `latest`/`YYYYMMDD` ni escriben en el cache compartido de GHCR; solo pueden reutilizarlo como fuente. En Etapa 4, las ejecuciones manuales pueden elegir un `privilege_profile` para probar de forma controlada qué relajaciones de Podman son realmente necesarias.
+* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones manuales sobre ramas distintas de `main` construyen y validan la imagen, pero no publican `latest`/`YYYYMMDD` ni escriben en el cache compartido de GHCR; solo pueden reutilizarlo como fuente.
 
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
-* **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree. El perfil estable conserva temporalmente `seccomp=unconfined`, `label=disable` y `cap-add=ALL`; los perfiles manuales de sondeo permiten retirar cada relajación por separado antes de cambiar el valor de producción.
+* **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree. El build funciona con los defaults de seguridad de Podman: no requiere `cap-add=ALL`, `seccomp=unconfined` ni `label=disable`.
 * **SecScan advisory (Trivy):** la imagen compilada se exporta temporalmente a `.tar` y Trivy intenta inspeccionar vulnerabilidades de sistema operativo. Actualmente este resultado no bloquea el pipeline y no debe interpretarse como garantía de ausencia de CVE en Fedora/OSTree.
 * **Registro:** tras completar el build, la imagen se publica en **GHCR** bajo las etiquetas `latest` y `YYYYMMDD`. La firma criptográfica del artefacto todavía no está implementada y se incorporará en una etapa posterior.
 
