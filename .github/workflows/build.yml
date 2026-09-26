@@ -90,6 +90,7 @@ jobs:
 
       # 4. Despliegue unificado de tags inmutables y flotantes post-build
       - name: Push Built Image
+        if: github.ref == 'refs/heads/main'
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
@@ -100,6 +101,7 @@ jobs:
   # -------------------------------------------------------------------------
   cleanup-registry:
     needs: build-scan-push
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       packages: write
