@@ -8,7 +8,6 @@ on:
       - Containerfile
       - .github/workflows/build.yml
       - files/**
-      - scripts/**
   schedule:
     - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
