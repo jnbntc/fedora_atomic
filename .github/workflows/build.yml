@@ -24,7 +24,7 @@ env:
 
 jobs:
   # -------------------------------------------------------------------------
-  # JOB 1: COMPILACIÓN, ESCANEO Y DESPLIEGUE INMUTABLE
+  # BUILD: COMPILACIÓN, ESCANEO Y DESPLIEGUE INMUTABLE
   # -------------------------------------------------------------------------
   build-scan-push:
     runs-on: ubuntu-latest
@@ -93,73 +93,4 @@ jobs:
         if: github.ref == 'refs/heads/main'
         run: |
           podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
-
-  # -------------------------------------------------------------------------
-  # JOB 2: LIMPIEZA ASÍNCRONA DEL REGISTRO (RETENCIÓN Y PURGA)
-  # Etapa 2: se separará en su propio workflow semanal.
-  # -------------------------------------------------------------------------
-  cleanup-registry:
-    needs: build-scan-push
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-
-    steps:
-      - name: Prune untagged and old container versions via GH CLI
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          clean_package() {
-            local PKG_NAME=$1
-            echo "::group::Limpiando paquete: ${PKG_NAME}"
-
-            # 1. Obtener los IDs (Con paginación forzada para evitar el punto ciego de los 100 registros)
-            local VERSIONS
-            VERSIONS=$(gh api --paginate -H "Accept: application/vnd.github+json" \
-              "/users/${OWNER}/packages/container/${PKG_NAME}/versions?per_page=100" 2>/dev/null || echo "[]")
-
-            if [ "$VERSIONS" = "[]" ] || [ -z "$VERSIONS" ]; then
-              echo "No se encontraron versiones o el paquete ${PKG_NAME} no existe."
-              echo "::endgroup::"
-              return
-            fi
-
-            # Normalizar múltiples páginas devueltas por la API en un solo array de JSON
-            VERSIONS=$(echo "${VERSIONS}" | jq -s 'flatten')
-
-            # 2. Purgar versiones que perdieron todas sus etiquetas (Untagged)
-            echo "--> Buscando imágenes sin etiquetas (untagged)..."
-            echo "${VERSIONS}" | jq -c '.[] | select(.metadata.container.tags == [])' | while read -r row; do
-              ID=$(echo "${row}" | jq -r '.id')
-              UPDATED=$(echo "${row}" | jq -r '.updated_at')
-              echo "Borrando versión untagged ID: ${ID} (Última mod: ${UPDATED})..."
-              gh api --method DELETE "/users/${OWNER}/packages/container/${PKG_NAME}/versions/${ID}" 2>/dev/null || true
-            done
-
-            # 3. Purgar versiones con etiquetas antiguas (>14 días), preservando 'latest' y reteniendo las últimas 5
-            if [ "${PKG_NAME}" = "fedora_atomic" ]; then
-              echo "--> Buscando builds inmutables antiguos (>14 días)..."
-
-              CUTOFF_DATE=$(date -u -d "14 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -v-14d +"%Y-%m-%dT%H:%M:%SZ")
-
-              echo "${VERSIONS}" | jq -c --arg cutoff "${CUTOFF_DATE}" '
-                [ .[] | select(.metadata.container.tags != [] and (.metadata.container.tags | index("latest") | not) and .updated_at < $cutoff) ]
-                | sort_by(.updated_at)
-                | reverse
-                | .[5:] // [] | .[]
-              ' | while read -r row; do
-                ID=$(echo "${row}" | jq -r '.id')
-                TAGS=$(echo "${row}" | jq -r '.metadata.container.tags | join(", ")')
-                echo "Borrando build antiguo ID: ${ID} [Tags: ${TAGS}]..."
-                gh api --method DELETE "/users/${OWNER}/packages/container/${PKG_NAME}/versions/${ID}" 2>/dev/null || true
-              done
-            fi
-
-            echo "::endgroup::"
-          }
-
-          clean_package "fedora_atomic"
-          clean_package "fedora_atomic%2Fcache"
+          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}\n
