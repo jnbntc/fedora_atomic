@@ -46,7 +46,8 @@ RUN rpm-ostree override remove \
         thermald \
         zsh-autosuggestions \
         zsh-syntax-highlighting \
-        steam-devices && \
+        steam-devices \
+        starship && \
     rpm-ostree cleanup -m
 
 # 3. Configuración declarativa del sistema
@@ -54,14 +55,12 @@ RUN rpm-ostree override remove \
 # desde el árbol versionado files/etc/.
 COPY files/etc/ /etc/
 
-# 4. Inyección de Starship
-RUN curl -sS https://starship.rs/install.sh | sh -s -- -y -b /usr/bin
 
-# 5. Activación de Servicios Base
+# 4. Activación de Servicios Base
 RUN ln -sf /usr/lib/systemd/system/podman-auto-update.timer /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/tailscaled.service /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/thermald.service /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/libvirtd.service /usr/lib/systemd/system/multi-user.target.wants/
 
-# 6. Sello del commit inmutable
+# 5. Sello del commit inmutable
 RUN ostree container commit
