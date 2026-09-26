@@ -1,16 +1,14 @@
-name: Stage 5 Rootfs Security Probe
+name: Stage 5 Security Integration Probe
 
 on:
   push:
     branches:
       - security/stage-5-sbom-rootfs
     paths:
-      - Containerfile
-      - files/**
       - .github/workflows/stage5-probe.yml
 
 concurrency:
-  group: stage5-rootfs-security-probe
+  group: stage5-security-integration-probe
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +37,7 @@ jobs:
             --pull=always \
             --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
-            --build-arg CACHE_BUSTER="${GITHUB_SHA}-stage5" \
+            --build-arg CACHE_BUSTER="${GITHUB_SHA}-stage5-integration" \
             --cache-from="${CACHE_REPO}" \
             -f Containerfile \
             -t localhost/fedora-atomic-stage5:probe .
@@ -50,56 +48,102 @@ jobs:
           set -Eeuo pipefail
           cid="$(podman create localhost/fedora-atomic-stage5:probe)"
           trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
-          mkdir -p rootfs
+
+          mkdir -p rootfs security-evidence
           podman export "$cid" | tar -x -C rootfs
-          test -f rootfs/usr/lib/os-release || test -f rootfs/etc/os-release
-          find rootfs -maxdepth 5 -type f \( -name Packages -o -name rpmdb.sqlite \) -print | head -20
 
-      - name: Trivy rootfs JSON
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          test -f rootfs/usr/lib/os-release
+          test -f rootfs/usr/share/rpm/rpmdb.sqlite
+
+      - name: Download pinned Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          scan-type: rootfs
-          scan-ref: rootfs
-          scanners: vuln
-          vuln-type: os
-          ignore-unfixed: true
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          format: json
-          output: trivy-rootfs.json
-          exit-code: '0'
+          syft-version: v1.52.0
 
-      - name: Summarize Trivy detection
+      - name: Generate SPDX and CycloneDX SBOMs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          "${{ steps.syft.outputs.cmd }}" dir:rootfs \
+            -o spdx-json=security-evidence/sbom.spdx.json \
+            -o cyclonedx-json=security-evidence/sbom.cyclonedx.json
+
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
+            security-evidence/sbom.spdx.json >/dev/null
+          jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' \
+            security-evidence/sbom.cyclonedx.json >/dev/null
+
+          rpm_packages="$(
+            jq '[
+              .packages[]?
+              | select(any(.externalRefs[]?;
+                  .referenceType == "purl"
+                  and (.referenceLocator | startswith("pkg:rpm/"))
+                ))
+            ] | length' security-evidence/sbom.spdx.json
+          )"
+
+          echo "RPM packages in SBOM: ${rpm_packages}"
+          (( rpm_packages > 0 ))
+
+      - name: Grype dependency scan from SBOM
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: security-evidence/sbom.spdx.json
+          fail-build: false
+          output-format: json
+          output-file: security-evidence/grype-advisory.json
+          by-cve: true
+          cache-db: true
+          grype-version: v0.119.0
+
+      - name: Query Fedora native advisories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          expected_name="$(jq -r '.expected_distro.name' security/vulnerability-policy.json)"
+          expected_version="$(jq -r '.expected_distro.version' security/vulnerability-policy.json)"
+
+          podman run --rm \
+            -e EXPECTED_NAME="${expected_name}" \
+            -e EXPECTED_VERSION="${expected_version}" \
+            -v "${PWD}/security-evidence:/evidence" \
+            localhost/fedora-atomic-stage5:probe \
+            bash -lc '
+              set -Eeuo pipefail
+              . /usr/lib/os-release
+
+              [[ "$ID" == "$EXPECTED_NAME" ]]
+              [[ "$VERSION_ID" == "$EXPECTED_VERSION" ]]
+              test -f /usr/share/rpm/rpmdb.sqlite
+
+              dnf5 --refresh advisory list \
+                --available \
+                --security \
+                --with-cve \
+                --json > /evidence/fedora-security-advisories.json
+            '
+
+      - name: Evaluate Fedora security gate
+        run: |
+          bash scripts/security/evaluate-fedora-advisories.sh \
+            security-evidence/fedora-security-advisories.json \
+            security/vulnerability-policy.json
+
+      - name: Summarize complementary Grype scan
         shell: bash
         run: |
           set -Eeuo pipefail
           jq '{
-            os: .Metadata.OS,
-            result_types: [.Results[]?.Type] | unique,
-            targets: [.Results[]?.Target],
-            vulnerabilities: {
-              critical: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length),
-              high: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length),
-              medium: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length),
-              low: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length),
-              unknown: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "UNKNOWN")] | length)
-            }
-          }' trivy-rootfs.json
-
-      - name: Generate SPDX SBOM from rootfs
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
-        with:
-          path: rootfs
-          format: spdx-json
-          output-file: sbom.spdx.json
-          upload-artifact: false
-
-      - name: Summarize SBOM
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          jq '{
-            spdxVersion,
-            name,
-            package_count: (.packages | length),
-            rpm_packages: ([.packages[]? | select(any(.externalRefs[]?; .referenceType == "purl" and (.referenceLocator | startswith("pkg:rpm/"))))] | length)
-          }' sbom.spdx.json
+            distro: .distro,
+            total_matches: (.matches | length),
+            by_severity: (
+              [.matches[]?.vulnerability.severity]
+              | group_by(.)
+              | map({key: .[0], value: length})
+              | from_entries
+            ),
+            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
+          }' security-evidence/grype-advisory.json
