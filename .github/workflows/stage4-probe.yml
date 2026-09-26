@@ -1,0 +1,111 @@
+name: Stage 4 Privilege Probe
+
+on:
+  push:
+    branches:
+      - hardening/stage-4-build
+    paths:
+      - Containerfile
+      - .github/workflows/stage4-probe.yml
+
+concurrency:
+  group: stage4-privilege-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe ${{ matrix.profile }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        profile:
+          - stable
+          - no-cap-all
+          - no-seccomp-unconfined
+          - no-label-disable
+          - podman-defaults
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Probe build privileges
+        shell: bash
+        env:
+          CACHE_REPO: ghcr.io/${{ github.repository_owner }}/fedora_atomic/cache
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          set -Eeuo pipefail
+
+          security_args=()
+          case "${PROFILE}" in
+            stable)
+              security_args=(
+                --security-opt seccomp=unconfined
+                --security-opt label=disable
+                --cap-add=ALL
+              )
+              ;;
+            no-cap-all)
+              security_args=(
+                --security-opt seccomp=unconfined
+                --security-opt label=disable
+              )
+              ;;
+            no-seccomp-unconfined)
+              security_args=(
+                --security-opt label=disable
+                --cap-add=ALL
+              )
+              ;;
+            no-label-disable)
+              security_args=(
+                --security-opt seccomp=unconfined
+                --cap-add=ALL
+              )
+              ;;
+            podman-defaults)
+              ;;
+            *)
+              echo "::error::Perfil desconocido: ${PROFILE}"
+              exit 2
+              ;;
+          esac
+
+          echo "=== profile=${PROFILE} ==="
+
+          n=0
+          max=3
+          until [[ $n -ge $max ]]; do
+            if podman build \
+              --pull=always \
+              "${security_args[@]}" \
+              --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+              --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
+              --build-arg CACHE_BUSTER="${GITHUB_SHA}-${PROFILE}" \
+              --cache-from="${CACHE_REPO}" \
+              -f Containerfile \
+              -t "localhost/fedora-atomic-stage4:${PROFILE}" .; then
+              break
+            fi
+
+            n=$((n + 1))
+            if [[ $n -ge $max ]]; then
+              echo "::error::Probe ${PROFILE} falló tras ${max} intentos."
+              exit 1
+            fi
+            echo "::warning::Probe ${PROFILE} falló; reintento $((n + 1))/${max} en 15s."
+            sleep 15
+          done
+
+          podman image exists "localhost/fedora-atomic-stage4:${PROFILE}"
+          echo "PASS profile=${PROFILE}"
