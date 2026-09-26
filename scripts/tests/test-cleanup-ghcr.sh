@@ -12,20 +12,25 @@ DELETE_LOG="${TMP_DIR}/deletes.log"
 mkdir -p "$FAKE_BIN"
 : >"$DELETE_LOG"
 
-old_date="$(date -u -d '30 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
 recent_date="$(date -u -d '1 day ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_1="$(date -u -d '20 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_2="$(date -u -d '21 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_3="$(date -u -d '22 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_4="$(date -u -d '23 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_5="$(date -u -d '24 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
+old_6="$(date -u -d '25 days ago' +'%Y-%m-%dT%H:%M:%SZ')"
 
 cat >"$FIXTURE" <<EOF
 [
-  {"id":100,"updated_at":"$old_date","metadata":{"container":{"tags":["latest"]}}},
-  {"id":99,"updated_at":"$recent_date","metadata":{"container":{"tags":["20260925"]}}},
-  {"id":98,"updated_at":"$old_date","metadata":{"container":{"tags":["old-1"]}}},
-  {"id":97,"updated_at":"$old_date","metadata":{"container":{"tags":["old-2"]}}},
-  {"id":96,"updated_at":"$old_date","metadata":{"container":{"tags":["old-3"]}}},
-  {"id":95,"updated_at":"$old_date","metadata":{"container":{"tags":["old-4"]}}},
-  {"id":94,"updated_at":"$old_date","metadata":{"container":{"tags":["old-5"]}}},
-  {"id":93,"updated_at":"$old_date","metadata":{"container":{"tags":["old-6"]}}},
-  {"id":92,"updated_at":"$old_date","metadata":{"container":{"tags":[]}}}
+  {"id":100,"updated_at":"$old_6","metadata":{"container":{"tags":["latest"]}}},
+  {"id":99,"updated_at":"$recent_date","metadata":{"container":{"tags":["recent"]}}},
+  {"id":98,"updated_at":"$old_1","metadata":{"container":{"tags":["old-1"]}}},
+  {"id":97,"updated_at":"$old_2","metadata":{"container":{"tags":["old-2"]}}},
+  {"id":96,"updated_at":"$old_3","metadata":{"container":{"tags":["old-3"]}}},
+  {"id":95,"updated_at":"$old_4","metadata":{"container":{"tags":["old-4"]}}},
+  {"id":94,"updated_at":"$old_5","metadata":{"container":{"tags":["old-5"]}}},
+  {"id":93,"updated_at":"$old_6","metadata":{"container":{"tags":["old-6"]}}},
+  {"id":92,"updated_at":"$old_6","metadata":{"container":{"tags":[]}}}
 ]
 EOF
 
@@ -48,7 +53,7 @@ export GH_FAKE_FIXTURE="$FIXTURE"
 export GH_FAKE_DELETE_LOG="$DELETE_LOG"
 
 dry_output="$(
-  "$SCRIPT"     --dry-run     --owner test-user     --retention-days 14     --keep-old-tagged 5     --package fedora_atomic
+  bash "$SCRIPT"     --dry-run     --owner test-user     --retention-days 14     --keep-old-tagged 5     --package fedora_atomic
 )"
 
 [[ ! -s "$DELETE_LOG" ]] || {
@@ -62,13 +67,18 @@ grep -q 'version=92' <<<"$dry_output" || {
 }
 
 grep -q 'version=93' <<<"$dry_output" || {
-  echo "FAIL: dry-run no seleccionó build antiguo id=93" >&2
+  echo "FAIL: dry-run no seleccionó el build antiguo esperado id=93" >&2
   exit 1
 }
 
+if grep -q 'version=100' <<<"$dry_output"; then
+  echo "FAIL: dry-run intentó borrar latest id=100" >&2
+  exit 1
+fi
+
 : >"$DELETE_LOG"
 
-"$SCRIPT"   --apply   --owner test-user   --retention-days 14   --keep-old-tagged 5   --package fedora_atomic >/dev/null
+bash "$SCRIPT"   --apply   --owner test-user   --retention-days 14   --keep-old-tagged 5   --package fedora_atomic >/dev/null
 
 [[ "$(wc -l <"$DELETE_LOG")" -eq 2 ]] || {
   echo "FAIL: se esperaban exactamente 2 DELETE" >&2
