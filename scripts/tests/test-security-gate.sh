@@ -2,84 +2,103 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-EVALUATOR="${ROOT_DIR}/scripts/security/evaluate-grype.sh"
+EVALUATOR="${ROOT_DIR}/scripts/security/evaluate-fedora-advisories.sh"
 POLICY="${ROOT_DIR}/security/vulnerability-policy.json"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-pass_report="${TMP_DIR}/pass.json"
-fail_report="${TMP_DIR}/fail.json"
-wrong_distro="${TMP_DIR}/wrong-distro.json"
+empty_report="${TMP_DIR}/empty.json"
+advisory_report="${TMP_DIR}/advisory.json"
+critical_report="${TMP_DIR}/critical.json"
+important_report="${TMP_DIR}/important.json"
+invalid_report="${TMP_DIR}/invalid.json"
 
-cat >"$pass_report" <<'JSON'
-{
-  "distro": {"name": "fedora", "version": "44"},
-  "matches": [
-    {
-      "artifact": {"name": "openssl-libs", "version": "1.0", "type": "rpm"},
-      "vulnerability": {
-        "id": "CVE-HIGH",
-        "severity": "High",
-        "namespace": "fedora:44",
-        "fix": {"state": "fixed", "versions": ["1.1"]}
-      }
-    },
-    {
-      "artifact": {"name": "golang.org/x/crypto", "version": "0.1", "type": "go-module"},
-      "vulnerability": {
-        "id": "CVE-LANGUAGE",
-        "severity": "Critical",
-        "namespace": "govulndb:language:go",
-        "fix": {"state": "fixed", "versions": ["0.2"]}
-      }
-    },
-    {
-      "artifact": {"name": "kernel", "version": "1.0", "type": "rpm"},
-      "vulnerability": {
-        "id": "CVE-UNFIXED",
-        "severity": "Critical",
-        "namespace": "fedora:44",
-        "fix": {"state": "not-fixed", "versions": []}
-      }
-    }
-  ]
-}
+printf '[]\n' >"$empty_report"
+bash "$EVALUATOR" "$empty_report" "$POLICY" >/dev/null
+
+cat >"$advisory_report" <<'JSON'
+[
+  {
+    "advisory_name": "FEDORA-LOW",
+    "advisory_type": "security",
+    "advisory_severity": "Low",
+    "nevra": "pkg-low-1.1-1.fc44.x86_64",
+    "references": [
+      {"reference_id": "CVE-LOW", "reference_type": "cve"}
+    ]
+  },
+  {
+    "advisory_name": "FEDORA-MODERATE",
+    "advisory_type": "security",
+    "advisory_severity": "Moderate",
+    "nevra": "pkg-moderate-1.1-1.fc44.x86_64",
+    "references": [
+      {"reference_id": "CVE-MODERATE", "reference_type": "cve"}
+    ]
+  }
+]
 JSON
+bash "$EVALUATOR" "$advisory_report" "$POLICY" >/dev/null
 
-bash "$EVALUATOR" "$pass_report" "$POLICY" >/dev/null
-
-cat >"$fail_report" <<'JSON'
-{
-  "distro": {"name": "fedora", "version": "44"},
-  "matches": [
-    {
-      "artifact": {"name": "rpm-critical", "version": "1.0", "type": "rpm"},
-      "vulnerability": {
-        "id": "CVE-BLOCK",
-        "severity": "Critical",
-        "namespace": "fedora:44",
-        "fix": {"state": "fixed", "versions": ["1.1"]}
-      }
-    }
-  ]
-}
+cat >"$critical_report" <<'JSON'
+[
+  {
+    "advisory_name": "FEDORA-CRITICAL",
+    "advisory_type": "security",
+    "advisory_severity": "Critical",
+    "nevra": "pkg-critical-2.0-1.fc44.x86_64",
+    "references": [
+      {"reference_id": "CVE-CRITICAL", "reference_type": "cve"}
+    ]
+  }
+]
 JSON
-
-if bash "$EVALUATOR" "$fail_report" "$POLICY" >/dev/null 2>&1; then
-  echo "FAIL: el gate permitió un Critical Fedora RPM corregible" >&2
+if bash "$EVALUATOR" "$critical_report" "$POLICY" >/dev/null 2>&1; then
+  echo "FAIL: el gate permitió un advisory Critical" >&2
   exit 1
 fi
 
-cat >"$wrong_distro" <<'JSON'
-{
-  "distro": {"name": "ubuntu", "version": "24.04"},
-  "matches": []
-}
+cat >"$important_report" <<'JSON'
+[
+  {
+    "advisory_name": "FEDORA-IMPORTANT",
+    "advisory_type": "security",
+    "advisory_severity": "Important",
+    "nevra": "pkg-important-3.0-1.fc44.x86_64",
+    "references": [
+      {"reference_id": "CVE-IMPORTANT", "reference_type": "cve"}
+    ]
+  },
+  {
+    "advisory_name": "FEDORA-IMPORTANT",
+    "advisory_type": "security",
+    "advisory_severity": "Important",
+    "nevra": "pkg-important-libs-3.0-1.fc44.x86_64",
+    "references": [
+      {"reference_id": "CVE-IMPORTANT", "reference_type": "cve"}
+    ]
+  }
+]
 JSON
-
-if bash "$EVALUATOR" "$wrong_distro" "$POLICY" >/dev/null 2>&1; then
-  echo "FAIL: el gate aceptó una distro inesperada" >&2
+if bash "$EVALUATOR" "$important_report" "$POLICY" >/dev/null 2>&1; then
+  echo "FAIL: el gate permitió un advisory Important" >&2
   exit 1
 fi
 
-echo "OK: vulnerability gate distingue scope, fix-state y distro."
+cat >"$invalid_report" <<'JSON'
+[
+  {
+    "advisory_name": "FEDORA-BUGFIX",
+    "advisory_type": "bugfix",
+    "advisory_severity": "Important",
+    "nevra": "pkg-1.0-1.fc44.x86_64",
+    "references": []
+  }
+]
+JSON
+if bash "$EVALUATOR" "$invalid_report" "$POLICY" >/dev/null 2>&1; then
+  echo "FAIL: el gate aceptó filas fuera del scope security" >&2
+  exit 1
+fi
+
+echo "OK: Fedora advisory gate bloquea Critical/Important y permite Moderate/Low."
