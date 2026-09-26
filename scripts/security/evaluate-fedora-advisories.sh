@@ -13,14 +13,40 @@ command -v jq >/dev/null 2>&1 || die "jq no está disponible"
 [[ -f "$REPORT" ]] || die "No existe el reporte DNF5: $REPORT"
 [[ -f "$POLICY" ]] || die "No existe la política: $POLICY"
 
-jq -e 'type == "array"' "$REPORT" >/dev/null || die "Reporte DNF5 inválido: se esperaba un array JSON"
-jq -e . "$POLICY" >/dev/null || die "Política JSON inválida"
+jq -e 'type == "array"' "$REPORT" >/dev/null   || die "Reporte DNF5 inválido: se esperaba un array JSON"
+
+jq -e '
+  .schema_version == 1
+  and .engine == "dnf5-advisory"
+  and (.expected_distro.name | type == "string" and length > 0)
+  and (.expected_distro.version | type == "string" and length > 0)
+  and .scope.mode == "available"
+  and .scope.type == "security"
+  and (.block_severities | type == "array" and length > 0)
+  and (.advisory_severities | type == "array")
+  and all(
+    (.block_severities + .advisory_severities)[];
+    (. | ascii_downcase) as $severity
+    | ["critical", "important", "moderate", "low"]
+    | index($severity)
+  )
+  and (
+    [
+      .block_severities[] | ascii_downcase
+    ] as $block
+    | [
+        .advisory_severities[] | ascii_downcase
+      ] as $advisory
+    | [$block[] | select(. as $s | $advisory | index($s))] | length == 0
+  )
+' "$POLICY" >/dev/null   || die "Política de vulnerabilidades inválida o inconsistente"
 
 if ! jq -e '
   all(.[];
     (.advisory_type // "" | ascii_downcase) == "security"
     and (.advisory_name // "") != ""
     and (.advisory_severity // "") != ""
+    and (.nevra // "") != ""
   )
 ' "$REPORT" >/dev/null; then
   die "El reporte contiene filas que no son advisories de seguridad DNF5 válidos"
@@ -35,9 +61,9 @@ count_unique_advisories() {
   jq     --argjson severities "$severities"     '[
       .[]
       | select(
-          (.advisory_severity | ascii_downcase) as $sev
+          (.advisory_severity | ascii_downcase) as $severity
           | $severities
-          | index($sev)
+          | index($severity)
         )
       | .advisory_name
     ]
@@ -70,7 +96,7 @@ if [[ -n "$summary_file" ]]; then
     echo "- CVE referenciadas: **$total_cves**"
     echo "- Moderate/Low (advisory): **$advisory**"
     echo "- Critical/Important (bloqueantes): **$blocked**"
-  } >> "$summary_file"
+  } >>"$summary_file"
 fi
 
 print_advisories() {
@@ -78,18 +104,20 @@ print_advisories() {
 
   jq -r     --argjson severities "$severities"     '.[] 
       | select(
-          (.advisory_severity | ascii_downcase) as $sev
+          (.advisory_severity | ascii_downcase) as $severity
           | $severities
-          | index($sev)
+          | index($severity)
         )
       | [
           .advisory_severity,
           .advisory_name,
           .nevra,
           (
-            [.references[]?
-             | select((.reference_type // "" | ascii_downcase) == "cve")
-             | .reference_id]
+            [
+              .references[]?
+              | select((.reference_type // "" | ascii_downcase) == "cve")
+              | .reference_id
+            ]
             | unique
             | join(",")
           )
