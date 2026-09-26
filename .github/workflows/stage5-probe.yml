@@ -1,0 +1,105 @@
+name: Stage 5 Rootfs Security Probe
+
+on:
+  push:
+    branches:
+      - security/stage-5-sbom-rootfs
+    paths:
+      - Containerfile
+      - files/**
+      - .github/workflows/stage5-probe.yml
+
+concurrency:
+  group: stage5-rootfs-security-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build probe image
+        shell: bash
+        env:
+          CACHE_REPO: ghcr.io/${{ github.repository_owner }}/fedora_atomic/cache
+        run: |
+          set -Eeuo pipefail
+
+          podman build \
+            --pull=always \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
+            --build-arg CACHE_BUSTER="${GITHUB_SHA}-stage5" \
+            --cache-from="${CACHE_REPO}" \
+            -f Containerfile \
+            -t localhost/fedora-atomic-stage5:probe .
+
+      - name: Export squashed rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cid="$(podman create localhost/fedora-atomic-stage5:probe)"
+          trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          mkdir -p rootfs
+          podman export "$cid" | tar -x -C rootfs
+          test -f rootfs/usr/lib/os-release || test -f rootfs/etc/os-release
+          find rootfs -maxdepth 5 -type f \( -name Packages -o -name rpmdb.sqlite \) -print | head -20
+
+      - name: Trivy rootfs JSON
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: rootfs
+          scan-ref: rootfs
+          scanners: vuln
+          vuln-type: os
+          ignore-unfixed: true
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: json
+          output: trivy-rootfs.json
+          exit-code: '0'
+
+      - name: Summarize Trivy detection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jq '{
+            os: .Metadata.OS,
+            result_types: [.Results[]?.Type] | unique,
+            targets: [.Results[]?.Target],
+            vulnerabilities: {
+              critical: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length),
+              high: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length),
+              medium: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "MEDIUM")] | length),
+              low: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "LOW")] | length),
+              unknown: ([.Results[]?.Vulnerabilities[]? | select(.Severity == "UNKNOWN")] | length)
+            }
+          }' trivy-rootfs.json
+
+      - name: Generate SPDX SBOM from rootfs
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: rootfs
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+
+      - name: Summarize SBOM
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          jq '{
+            spdxVersion,
+            name,
+            package_count: (.packages | length),
+            rpm_packages: ([.packages[]? | select(any(.externalRefs[]?; .referenceType == "purl" and (.referenceLocator | startswith("pkg:rpm/"))))] | length)
+          }' sbom.spdx.json
