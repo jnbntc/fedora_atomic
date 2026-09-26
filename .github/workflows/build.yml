@@ -57,9 +57,6 @@ jobs:
           until [ $n -ge $max ]; do
             podman build \
               --pull=always \
-              --security-opt seccomp=unconfined \
-              --security-opt label=disable \
-              --cap-add=ALL \
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
               --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \

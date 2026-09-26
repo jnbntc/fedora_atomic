@@ -23,7 +23,7 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
-* **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree.
+* **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree. El build funciona con los defaults de seguridad de Podman: no requiere `cap-add=ALL`, `seccomp=unconfined` ni `label=disable`.
 * **SecScan advisory (Trivy):** la imagen compilada se exporta temporalmente a `.tar` y Trivy intenta inspeccionar vulnerabilidades de sistema operativo. Actualmente este resultado no bloquea el pipeline y no debe interpretarse como garantía de ausencia de CVE en Fedora/OSTree.
 * **Registro:** tras completar el build, la imagen se publica en **GHCR** bajo las etiquetas `latest` y `YYYYMMDD`. La firma criptográfica del artefacto todavía no está implementada y se incorporará en una etapa posterior.
 
@@ -72,7 +72,7 @@ El host local (notebook) opera como un nodo pasivo de consumo.
 Paquetes y servicios inyectados nativamente en la compilación remota. El host no gasta ciclos de CPU en resolver este stack:
 * **Infraestructura y Redes:** `tailscale` (VPN + nodo de salida).
 * **Telemetría y Gestión:** suite `cockpit` (system/podman/machines), `btop`.
-* **Desarrollo y Contenedores:** `distrobox`, `tmux`, `zsh`, `code`, `fira-code-fonts`, `jetbrains-mono-fonts`.
+* **Desarrollo y Contenedores:** `distrobox`, `tmux`, `zsh`, `code`, `starship` (binario upstream pinneado y verificado por SHA-256), `fira-code-fonts`, `jetbrains-mono-fonts`.
 * **Aceleración Gráfica (OpenCL/VAAPI):** `intel-compute-runtime`, `libva-intel-media-driver`, `oneapi-level-zero`, `intel-gpu-tools`, `clinfo`, `vulkan-tools`.
 * **Virtualización y QA:** `virt-manager`, `libvirt-daemon-kvm`, `libvirt-client`, `swtpm`, `qemu-system-x86`, `edk2-ovmf`, `evtest`.
 * **Backup:** `restic`.
