@@ -19,7 +19,7 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 
 * **Push controlado:** cambios en `main` que afecten al `Containerfile`, al workflow de build o a futuros archivos de configuración de la imagen disparan un nuevo build.
 * **Nightly:** `cron: '17 22 * * *'` (22:17 UTC / 19:17 ART). El minuto 17 evita concentrar la ejecución exactamente al comienzo de la hora.
-* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones manuales sobre ramas distintas de `main` construyen y validan la imagen, pero no publican `latest`/`YYYYMMDD`.
+* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones manuales sobre ramas distintas de `main` construyen y validan la imagen, pero no publican `latest`/`YYYYMMDD` ni escriben en el cache compartido de GHCR; solo pueden reutilizarlo como fuente.
 
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
