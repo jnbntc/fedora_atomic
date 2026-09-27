@@ -11,6 +11,7 @@ on:
       - security/**
       - scripts/security/**
       - scripts/smoke/**
+      - scripts/publish/**
   schedule:
     - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
@@ -60,6 +61,7 @@ jobs:
               --pull=always \
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
               --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
               "${cache_args[@]}" \
               -f Containerfile \
@@ -241,8 +243,26 @@ jobs:
           echo "::error::El gate de seguridad Fedora bloqueó la publicación. Revisar el artefacto fedora-atomic-security-${{ github.sha }}."
           exit 1
 
-      - name: Push Built Image
+      - name: Publish Immutable Image Identity
         if: github.ref == 'refs/heads/main'
+        shell: bash
         run: |
-          podman push "${IMAGE_NAME}:${IMAGE_TAG}"
-          podman push "${IMAGE_NAME}:${DATE_TAG}"
+          set -Eeuo pipefail
+          bash scripts/publish/publish-image.sh \
+            --local-image "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --repository "${IMAGE_NAME}" \
+            --date "${DATE_TAG}" \
+            --revision "${GITHUB_SHA}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --identity-file security-evidence/image-identity.json
+
+      - name: Upload Image Identity
+        if: github.ref == 'refs/heads/main' && success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-atomic-identity-${{ github.sha }}-${{ github.run_attempt }}
+          path: security-evidence/image-identity.json
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 6
