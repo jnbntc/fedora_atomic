@@ -29,6 +29,7 @@ Tags:
   sha-<git sha40>
   <YYYYMMDD>-<sha12>
   run-<run_id>-<attempt>
+  candidate
   latest
 EOF
 }
@@ -166,6 +167,9 @@ candidate_digest="$(publish_run_identity "$run_tag")"
 ensure_immutable_alias "$revision_tag" "$candidate_digest"
 ensure_immutable_alias "$date_tag" "$candidate_digest"
 
+log "Actualizando canal mutable candidate"
+push_tag_and_verify "candidate" "$candidate_digest"
+
 log "Actualizando alias mutable latest al final"
 push_tag_and_verify "latest" "$candidate_digest"
 
@@ -195,10 +199,10 @@ jq -n \
     generated_at: $generated_at,
     tags: {
       immutable: [$revision_tag, $date_tag, $run_tag],
-      mutable: ["latest"]
+      mutable: ["candidate", "latest"]
     }
   }' >"$IDENTITY_FILE"
 
 log "Identidad publicada: ${REPOSITORY}@${candidate_digest}"
 log "Tags inmutables: ${revision_tag}, ${date_tag}, ${run_tag}"
-log "Alias mutable: latest"
+log "Aliases mutables: candidate, latest"
