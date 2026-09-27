@@ -138,14 +138,14 @@ jobs:
           grype-version: v0.119.0
           cache-db: true
 
-      - name: Grype advisory scan of rootfs
+      - name: Grype advisory scan of SBOM
         shell: bash
         env:
           GRYPE_CHECK_FOR_APP_UPDATE: "false"
         run: |
           set -Eeuo pipefail
 
-          "${{ steps.grype.outputs.cmd }}" dir:rootfs \
+          "${{ steps.grype.outputs.cmd }}" sbom:security-evidence/sbom.spdx.json \
             --by-cve \
             --output json \
             --file security-evidence/grype-advisory.json
