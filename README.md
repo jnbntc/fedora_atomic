@@ -24,10 +24,11 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
 * **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree. El build funciona con los defaults de seguridad de Podman: no requiere `cap-add=ALL`, `seccomp=unconfined` ni `label=disable`.
+* **Smoke tests del artefacto:** antes del análisis de seguridad se valida desde dentro de la imagen que Fedora 44, paquetes, comandos, Starship y unidades systemd esperadas estén presentes; además, todo `files/etc/` se compara byte a byte contra el rootfs exportado y Firefox debe permanecer ausente.
 * **SBOM:** el rootfs final se exporta de forma *squashed* y Syft `v1.52.0` genera inventarios **SPDX 2.3 JSON** y **CycloneDX JSON**. La ejecución falla si no detecta el rpmdb o si el SBOM no contiene paquetes RPM.
 * **Fedora Security Gate:** `dnf5 advisory` consulta la metadata nativa de Fedora contra el rpmdb exacto de la imagen recién construida. La política versionada en `security/vulnerability-policy.json` bloquea advisories `Critical` e `Important` disponibles; `Moderate` y `Low` son informativos.
 * **Grype advisory:** Grype `v0.119.0` analiza el SBOM como capa complementaria para dependencias embebidas (Go, Python, CPE, etc.). No se usa como autoridad para CVE del SO porque los probes de Etapa 5 comprobaron que no asociaba los RPM OSTree con namespaces Fedora.
-* **Evidencia:** cada build conserva por 30 días los dos SBOM, el reporte Grype y el JSON de advisories Fedora como artifact de GitHub Actions.
+* **Evidencia:** cada build conserva por 30 días el resultado de smoke tests, los dos SBOM, el reporte Grype y el JSON de advisories Fedora como artifact de GitHub Actions.
 * **Registro:** tras completar el build, la imagen se publica en **GHCR** bajo las etiquetas `latest` y `YYYYMMDD`. La firma criptográfica del artefacto todavía no está implementada y se incorporará en una etapa posterior.
 
 ### 2. Política de seguridad del artefacto
@@ -38,6 +39,7 @@ La publicación a GHCR ocurre **después** de la evaluación de seguridad. El fl
 podman build
     │
     ├── export rootfs
+    │     ├── smoke tests → contrato funcional
     │     └── Syft → SPDX + CycloneDX
     │
     ├── Grype sobre SBOM → advisory de dependencias
