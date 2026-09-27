@@ -89,9 +89,10 @@ ensure_immutable_alias() {
 
     log "Tag inmutable ya existe con el mismo digest: ${tag} -> ${existing}"
     return 0
+  else
+    rc=$?
   fi
 
-  rc=$?
   [[ "$rc" -eq 1 ]] || die "No se pudo determinar si ${tag} existe (rc=${rc})"
 
   log "Creando tag inmutable: ${tag}"
@@ -104,9 +105,10 @@ publish_run_identity() {
 
   if existing="$(remote_digest "$tag")"; then
     die "El tag de ejecución ${tag} ya existe (${existing}); RUN_ID/RUN_ATTEMPT deberían ser únicos"
+  else
+    rc=$?
   fi
 
-  rc=$?
   [[ "$rc" -eq 1 ]] || die "No se pudo comprobar ausencia de ${tag} (rc=${rc})"
 
   digest_file="$(mktemp)"
