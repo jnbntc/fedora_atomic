@@ -13,6 +13,9 @@ required_files=(
   "files/etc/modprobe.d/iwlwifi.conf"
   "files/etc/udev/rules.d/99-battery.rules"
   "files/etc/tmpfiles.d/lenovo-conservation.conf"
+  "files/usr/libexec/fedora-atomic-verified-update"
+  "files/usr/lib/systemd/system/fedora-atomic-verified-update.service"
+  "files/usr/lib/systemd/system/fedora-atomic-verified-update.timer"
 )
 
 for file in "${required_files[@]}"; do
@@ -34,6 +37,11 @@ grep -Fq 'COPY files/etc/yum.repos.d/vscode.repo /etc/yum.repos.d/vscode.repo' C
 
 grep -Fq 'COPY files/etc/ /etc/' Containerfile || {
   echo "FAIL: falta COPY declarativo de files/etc" >&2
+  exit 1
+}
+
+grep -Fq 'COPY files/usr/ /usr/' Containerfile || {
+  echo "FAIL: falta COPY declarativo de files/usr" >&2
   exit 1
 }
 

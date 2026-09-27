@@ -4,6 +4,7 @@ set -Eeuo pipefail
 EXPECTED_FEDORA_VERSION="44"
 EXPECTED_FEDORA_ID="fedora"
 EXPECTED_STARSHIP_VERSION="1.26.0"
+EXPECTED_COSIGN_VERSION="v3.1.3"
 
 REQUIRED_PACKAGES=(
   code
@@ -66,6 +67,9 @@ REQUIRED_COMMANDS=(
   rpm-ostree
   dnf5
   starship
+  skopeo
+  jq
+  cosign
 )
 
 ENABLED_UNITS=(
@@ -135,6 +139,9 @@ inside_image() {
   actual_starship_version="$(starship --version | awk 'NR == 1 {print $2}')"
   [[ "$actual_starship_version" == "$EXPECTED_STARSHIP_VERSION" ]]     || fail "Starship $actual_starship_version (esperado: $EXPECTED_STARSHIP_VERSION)"
 
+  actual_cosign_version="$(cosign version 2>/dev/null | awk '$1 == "GitVersion:" {print $2; exit}')"
+  [[ "$actual_cosign_version" == "$EXPECTED_COSIGN_VERSION" ]]     || fail "Cosign $actual_cosign_version (esperado: $EXPECTED_COSIGN_VERSION)"
+
   test -f /etc/yum.repos.d/vscode.repo || fail "vscode.repo ausente"
   test -f /etc/yum.repos.d/tailscale.repo || fail "tailscale.repo ausente"
 
@@ -149,8 +156,17 @@ inside_image() {
 
   test -d /ostree || fail "Árbol OSTree ausente"
   test -x /usr/bin/starship || fail "/usr/bin/starship no es ejecutable"
+  test -x /usr/bin/cosign || fail "/usr/bin/cosign no es ejecutable"
+  test -x /usr/libexec/fedora-atomic-verified-update || fail "updater verificado ausente/no ejecutable"
+  test -f /usr/lib/systemd/system/fedora-atomic-verified-update.service || fail "service del updater ausente"
+  test -f /usr/lib/systemd/system/fedora-atomic-verified-update.timer || fail "timer del updater ausente"
 
-  info "Fedora $VERSION_ID, paquetes, comandos, Starship y unidades: OK"
+  timer_link="/usr/lib/systemd/system/timers.target.wants/fedora-atomic-verified-update.timer"
+  [[ -L "$timer_link" ]] || fail "timer verificado no habilitado"
+  [[ "$(readlink "$timer_link")" == "/usr/lib/systemd/system/fedora-atomic-verified-update.timer" ]] \
+    || fail "symlink inesperado del timer verificado: $(readlink "$timer_link")"
+
+  info "Fedora $VERSION_ID, paquetes, comandos, Starship, Cosign y unidades: OK"
 }
 
 compare_declared_config() {
@@ -203,6 +219,8 @@ host_mode() {
     echo "- Comandos requeridos: **${#REQUIRED_COMMANDS[@]}** OK"
     echo "- Unidades habilitadas: **${#ENABLED_UNITS[@]}** OK"
     echo "- Starship: **$EXPECTED_STARSHIP_VERSION**"
+    echo "- Cosign: **$EXPECTED_COSIGN_VERSION**"
+    echo "- Updater verificado: **instalado + timer habilitado**"
     echo "- Configuración IaC: comparación byte a byte OK"
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=Check verified Fedora Atomic stable updates outside work hours
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+OnCalendar=*-*-* 18:30:00
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=false
+WakeSystem=false
+Unit=fedora-atomic-verified-update.service
+
+[Install]
+WantedBy=timers.target

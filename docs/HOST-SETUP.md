@@ -1,81 +1,122 @@
 # Setup host-local
 
-La imagen OCI y el estado local del host son capas distintas. Este repo controla la imagen base; algunos ajustes operativos del notebook siguen siendo intencionalmente host-local.
+La workstation consume únicamente imágenes del canal `stable`, pero no confía ciegamente en el tag. La imagen incluye un updater que resuelve el tag a un digest, verifica su supply chain y recién después prepara el siguiente deployment.
 
-## Canal recomendado
-
-El host principal debe consumir:
+## Flujo normal
 
 ```text
-ghcr.io/jnbntc/fedora_atomic:stable
+16:17  GitHub construye la imagen del día
+          ↓
+       candidate
+          ↓
+       segunda validación
+          ↓
+        stable
+
+18:30  notebook comprueba stable
+02:30  segundo intento
+          ↓
+       Cosign signature
+       SLSA provenance
+       SPDX attestation
+          ↓
+       rpm-ostree rebase por digest
+          ↓
+       staged para el próximo reboot
 ```
 
-Para recuperación o rebase se resuelve primero `stable` a un digest y se verifica criptográficamente. El helper de recuperación genera un target fijado por digest.
+No hay reboot automático.
 
-## AutomaticUpdatePolicy
+## Timer verificado
 
-`rpm-ostreed` soporta la política `stage`, que descarga y prepara el update para el siguiente boot sin reiniciar por sí sola.
+La imagen instala y habilita:
 
-Archivo host-local:
+```text
+fedora-atomic-verified-update.timer
+fedora-atomic-verified-update.service
+/usr/libexec/fedora-atomic-verified-update
+```
+
+Horario local:
 
 ```ini
-# /etc/rpm-ostreed.conf
-[Daemon]
-AutomaticUpdatePolicy=stage
-IdleExitTimeout=60
+OnCalendar=*-*-* 18:30:00
+OnCalendar=*-*-* 02:30:00
+Persistent=false
+WakeSystem=false
 ```
 
-Aplicar/releer:
+Además, el script solo actúa dentro de ventanas acotadas alrededor de esos horarios. Si systemd intenta ejecutarlo tarde por un resume/suspend, sale sin tocar el sistema. Esto evita que una ejecución perdida durante la noche aparezca al encender la notebook a las 08:00.
+
+El servicio usa prioridad baja de CPU/I/O y no contiene tokens ni credenciales.
+
+## Verificación criptográfica
+
+Antes de cada stage se exige:
+
+- firma Cosign válida;
+- certificado emitido para `.github/workflows/build.yml@refs/heads/main`;
+- issuer GitHub Actions OIDC;
+- repository/ref/SHA coincidentes con la revision OCI;
+- provenance `https://slsa.dev/provenance/v1`;
+- SBOM attestation `https://spdx.dev/Document/v2.3`.
+
+Si cualquiera falla, no se ejecuta `rpm-ostree rebase`.
+
+## Timer estándar de rpm-ostree
+
+El updater anterior debe quedar deshabilitado:
 
 ```bash
-sudo rpm-ostree reload
-sudo systemctl enable rpm-ostreed-automatic.timer --now
-rpm-ostree status
+sudo systemctl disable --now rpm-ostreed-automatic.timer
 ```
 
-`IdleExitTimeout=60` coincide actualmente con el default upstream, pero se documenta aquí porque forma parte de la intención operativa del host.
+El nuevo flujo no usa `AutomaticUpdatePolicy=stage` como mecanismo de scheduling. Puede seguir figurando configurado en `/etc/rpm-ostreed.conf`, pero el timer estándar permanece deshabilitado.
 
-## Horario local del timer
-
-Si se quiere mantener el staging diario alrededor de la 01:00:
-
-```ini
-# /etc/systemd/system/rpm-ostreed-automatic.timer.d/override.conf
-[Timer]
-OnCalendar=
-OnCalendar=*-*-* 01:00:00
-Persistent=true
-```
-
-Después:
+## Comprobar el estado
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl restart rpm-ostreed-automatic.timer
-systemctl list-timers rpm-ostreed-automatic.timer --all
+systemctl status fedora-atomic-verified-update.timer --no-pager
+systemctl list-timers fedora-atomic-verified-update.timer --all
+journalctl -u fedora-atomic-verified-update.service --no-pager
+rpm-ostree status -v
 ```
 
-El `OnCalendar=` vacío limpia el calendario heredado del timer antes de definir el nuevo.
+Una ejecución normal sin novedades termina indicando que el digest booted ya coincide con `stable`.
 
-## Estado local que no está en la imagen
+Cuando existe una versión nueva, queda `Staged: yes`; el usuario reinicia cuando le resulte conveniente.
 
-Actualmente pueden existir paquetes layered/locales —por ejemplo software de terceros que no conviene hornear en la imagen—. Antes de cambios grandes:
+## Ejecución manual
+
+El horario se puede saltear explícitamente para pruebas administrativas:
+
+```bash
+sudo env FEDORA_ATOMIC_ALLOW_ANY_TIME=1 \
+  /usr/libexec/fedora-atomic-verified-update
+```
+
+Esto **tampoco reinicia**.
+
+## Paquetes host-locales
+
+Pueden existir paquetes locales, por ejemplo TeamViewer. El updater usa `rpm-ostree rebase`, por lo que ese estado se conserva igual que en un rebase manual.
+
+Antes de cambios grandes:
 
 ```bash
 bash scripts/recovery/capture-host-state.sh
 rpm-ostree status -v
 ```
 
-El snapshot registra inventario pero evita copiar secretos, authfiles y contenido de `$HOME`.
-
-## Verificación después del reboot
+## Verificación después de reboot
 
 ```bash
 rpm-ostree status -v
-systemctl is-enabled rpm-ostreed-automatic.timer
-systemctl list-timers rpm-ostreed-automatic.timer --all
-tailscale status
-systemctl --failed
+sudo bootc status
+systemctl is-active tailscaled
+systemctl status fedora-atomic-verified-update.timer --no-pager
+systemctl list-timers fedora-atomic-verified-update.timer --all
+systemctl --failed --no-pager
 ```
 
 Si el deployment nuevo no funciona, seguir `docs/DISASTER-RECOVERY.md`.

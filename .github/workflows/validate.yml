@@ -119,12 +119,18 @@ jobs:
           bash -n scripts/recovery/verify-stable.sh
           bash -n scripts/recovery/rebase-stable.sh
           bash -n scripts/recovery/capture-host-state.sh
+          bash -n files/usr/libexec/fedora-atomic-verified-update
           bash -n scripts/tests/test-recovery.sh
+          bash -n scripts/tests/test-verified-updater.sh
       - name: ShellCheck
         run: |
           shellcheck scripts/recovery/verify-stable.sh
           shellcheck scripts/recovery/rebase-stable.sh
           shellcheck scripts/recovery/capture-host-state.sh
+          shellcheck files/usr/libexec/fedora-atomic-verified-update
           shellcheck scripts/tests/test-recovery.sh
+          shellcheck scripts/tests/test-verified-updater.sh
       - name: Recovery contract tests
         run: bash scripts/tests/test-recovery.sh
+      - name: Verified local updater tests
+        run: bash scripts/tests/test-verified-updater.sh

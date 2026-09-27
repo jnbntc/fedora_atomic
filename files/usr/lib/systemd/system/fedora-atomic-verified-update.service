@@ -1,0 +1,13 @@
+[Unit]
+Description=Verify and stage Fedora Atomic stable image
+Documentation=https://github.com/jnbntc/fedora_atomic/blob/main/docs/HOST-SETUP.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/fedora-atomic-verified-update
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=45min
+UMask=0077
