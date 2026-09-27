@@ -223,7 +223,7 @@ jobs:
           if-no-files-found: warn
           compression-level: 6
 
-      - name: Enforce Fedora security gate
+      - name: Enforce Fedora Security Gate
         if: steps.fedora_gate.outcome == 'failure'
         run: |
           echo "::error::El gate de seguridad Fedora bloqueó la publicación. Revisar el artefacto fedora-atomic-security-${{ github.sha }}."
