@@ -219,13 +219,13 @@ clean_package() {
 
   log "Versiones encontradas: ${count}"
 
-  clean_untagged "$package" "$versions"
-
   case "$package" in
     fedora_atomic)
+      log "Versiones untagged del paquete principal se preservan: pueden contener firmas/attestations OCI."
       clean_main_tagged "$versions"
       ;;
     fedora_atomic%2Fcache)
+      clean_untagged "$package" "$versions"
       clean_cache_tagged "$versions"
       ;;
   esac
