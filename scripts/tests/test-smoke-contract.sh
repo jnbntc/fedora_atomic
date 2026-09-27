@@ -86,7 +86,7 @@ grep -Fq 'bash scripts/smoke/test-image.sh' "$workflow" || {
 
 smoke_line="$(grep -n 'Artifact Smoke Tests' "$workflow" | head -n1 | cut -d: -f1)"
 syft_line="$(grep -n 'Download pinned Syft' "$workflow" | head -n1 | cut -d: -f1)"
-push_line="$(grep -n 'Push Built Image' "$workflow" | head -n1 | cut -d: -f1)"
+push_line="$(grep -n 'Publish Immutable Image Identity' "$workflow" | head -n1 | cut -d: -f1)"
 
 [[ -n "$smoke_line" && -n "$syft_line" && -n "$push_line" ]] || {
   echo "FAIL: faltan etapas esperadas en build.yml" >&2
@@ -94,7 +94,7 @@ push_line="$(grep -n 'Push Built Image' "$workflow" | head -n1 | cut -d: -f1)"
 }
 
 (( smoke_line < syft_line && smoke_line < push_line )) || {
-  echo "FAIL: smoke tests deben ejecutarse antes de seguridad y push" >&2
+  echo "FAIL: smoke tests deben ejecutarse antes de seguridad y publicación" >&2
   exit 1
 }
 
