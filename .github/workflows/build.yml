@@ -14,7 +14,7 @@ on:
       - scripts/smoke/**
       - scripts/publish/**
   schedule:
-    - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
+    - cron: '17 19 * * *' # 19:17 UTC / 16:17 ART
   workflow_dispatch:
 
 concurrency:
