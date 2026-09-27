@@ -64,17 +64,32 @@ RUN set -eux; \
     /usr/bin/starship --version; \
     rm -f "${archive}"
 
-# 4. Configuración declarativa del sistema
-# Copia /etc/profile.d, /etc/skel, zram, sysctl, modprobe, udev y tmpfiles
-# desde el árbol versionado files/etc/.
+# 4. Cosign pinneado para verificar supply-chain en el propio host
+ARG COSIGN_VERSION=3.1.3
+ARG COSIGN_SHA256=4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+
+RUN set -eux; \
+    binary="/tmp/cosign"; \
+    curl --fail --location --retry 3 --retry-delay 2 \
+      "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+      -o "${binary}"; \
+    printf '%s  %s\n' "${COSIGN_SHA256}" "${binary}" | sha256sum -c -; \
+    install -m 0755 "${binary}" /usr/bin/cosign; \
+    /usr/bin/cosign version; \
+    rm -f "${binary}"
+
+# 5. Configuración declarativa del sistema
 COPY files/etc/ /etc/
+COPY files/usr/ /usr/
 
+RUN chmod 0755 /usr/libexec/fedora-atomic-verified-update
 
-# 5. Activación de Servicios Base
+# 6. Activación de Servicios Base
 RUN ln -sf /usr/lib/systemd/system/podman-auto-update.timer /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/tailscaled.service /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/thermald.service /usr/lib/systemd/system/multi-user.target.wants/ && \
-    ln -sf /usr/lib/systemd/system/libvirtd.service /usr/lib/systemd/system/multi-user.target.wants/
+    ln -sf /usr/lib/systemd/system/libvirtd.service /usr/lib/systemd/system/multi-user.target.wants/ && \
+    ln -sf /usr/lib/systemd/system/fedora-atomic-verified-update.timer /usr/lib/systemd/system/timers.target.wants/
 
-# 6. Sello del commit inmutable
+# 7. Sello del commit inmutable
 RUN ostree container commit
