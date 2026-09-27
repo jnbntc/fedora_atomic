@@ -195,3 +195,11 @@ grep -Fq 'rpm-ostree cleanup --pending' "$ROOT_DIR/docs/DISASTER-RECOVERY.md"
 grep -Fq 'stable' "$ROOT_DIR/docs/HOST-SETUP.md"
 
 echo "OK: helpers, runbooks y recovery drill validados."
+
+
+if [[ -e "$ROOT_DIR/.github/workflows/stage10-recovery-probe.yml" ]]; then
+  echo "FAIL: quedó workflow temporal de Etapa 10" >&2
+  exit 1
+fi
+
+echo "OK: no queda workflow temporal de recovery."
