@@ -7,6 +7,7 @@ on:
     paths:
       - Containerfile
       - .github/workflows/build.yml
+      - .github/workflows/promote-stable.yml
       - files/**
       - security/**
       - scripts/security/**
@@ -17,7 +18,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: fedora-atomic-${{ github.workflow }}-${{ github.ref }}
+  group: fedora-atomic-${{ github.ref == 'refs/heads/main' && 'release' || github.ref }}
   cancel-in-progress: false
 
 env:

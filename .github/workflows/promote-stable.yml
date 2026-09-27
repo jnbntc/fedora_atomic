@@ -1,0 +1,170 @@
+name: Promote Candidate to Stable
+
+on:
+  workflow_run:
+    workflows:
+      - Fedora Atomic Core - Build & Security Gate
+    types:
+      - completed
+
+concurrency:
+  group: fedora-atomic-release
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/fedora_atomic
+
+jobs:
+  promote:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout exact candidate revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull immutable candidate image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          REVISION="${{ github.event.workflow_run.head_sha }}"
+          IMAGE_REF="${IMAGE_NAME}:sha-${REVISION}"
+
+          echo "REVISION=${REVISION}" >> "${GITHUB_ENV}"
+          echo "IMAGE_REF=${IMAGE_REF}" >> "${GITHUB_ENV}"
+
+          podman pull "${IMAGE_REF}"
+
+      - name: Export registry candidate rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          rm -rf promotion-rootfs promotion-evidence
+          mkdir -p promotion-rootfs promotion-evidence
+
+          cid="$(podman create "${IMAGE_REF}")"
+          trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          podman export "$cid" | tar -x -C promotion-rootfs
+
+          test -f promotion-rootfs/usr/lib/os-release
+          test -f promotion-rootfs/usr/share/rpm/rpmdb.sqlite
+
+      - name: Validate registry candidate smoke tests
+        id: smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/smoke/test-image.sh \
+            "${IMAGE_REF}" \
+            promotion-rootfs \
+            files/etc \
+            2>&1 | tee promotion-evidence/artifact-smoke.txt
+
+      - name: Query Fedora security advisories again
+        id: fedora_query
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          expected_name="$(jq -r '.expected_distro.name' security/vulnerability-policy.json)"
+          expected_version="$(jq -r '.expected_distro.version' security/vulnerability-policy.json)"
+
+          podman run --rm \
+            -e EXPECTED_NAME="${expected_name}" \
+            -e EXPECTED_VERSION="${expected_version}" \
+            -v "${PWD}/promotion-evidence:/evidence" \
+            "${IMAGE_REF}" \
+            bash -lc '
+              set -Eeuo pipefail
+              . /usr/lib/os-release
+
+              [[ "$ID" == "$EXPECTED_NAME" ]]
+              [[ "$VERSION_ID" == "$EXPECTED_VERSION" ]]
+              test -f /usr/share/rpm/rpmdb.sqlite
+
+              dnf5 --refresh advisory list \
+                --available \
+                --security \
+                --with-cve \
+                --json > /evidence/fedora-security-advisories.json
+            '
+
+          jq -e 'type == "array"' promotion-evidence/fedora-security-advisories.json >/dev/null
+
+      - name: Evaluate Fedora promotion gate
+        id: fedora_gate
+        if: steps.fedora_query.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/security/evaluate-fedora-advisories.sh \
+            promotion-evidence/fedora-security-advisories.json \
+            security/vulnerability-policy.json \
+            2>&1 | tee promotion-evidence/fedora-security-gate.txt
+
+      - name: Record Fedora query failure
+        if: steps.fedora_query.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "Fedora advisory query failed; promotion must not continue." \
+            > promotion-evidence/fedora-security-gate.txt
+
+      - name: Upload promotion validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-atomic-promotion-validation-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          path: |
+            promotion-evidence/artifact-smoke.txt
+            promotion-evidence/fedora-security-advisories.json
+            promotion-evidence/fedora-security-gate.txt
+          retention-days: 30
+          if-no-files-found: warn
+          compression-level: 6
+
+      - name: Enforce candidate validation
+        if: >
+          steps.smoke.outcome == 'failure' ||
+          steps.fedora_query.outcome == 'failure' ||
+          steps.fedora_gate.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::error::Candidate rechazado por la validación previa a stable."
+          exit 1
+
+      - name: Promote candidate to stable
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/publish/promote-stable.sh \
+            --repository "${IMAGE_NAME}" \
+            --revision "${REVISION}" \
+            --source-run-id "${{ github.event.workflow_run.id }}" \
+            --source-run-attempt "${{ github.event.workflow_run.run_attempt }}" \
+            --evidence-file promotion-evidence/stable-promotion.json
+
+      - name: Upload stable promotion evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-atomic-stable-promotion-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          path: promotion-evidence/stable-promotion.json
+          retention-days: 90
+          if-no-files-found: warn
+          compression-level: 6

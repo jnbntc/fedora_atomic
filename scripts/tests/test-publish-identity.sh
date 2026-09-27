@@ -86,15 +86,15 @@ run_publish() {
 identity_1="${TMP_DIR}/identity-1.json"
 run_publish 100 1 "$identity_1" >/dev/null
 
-for tag in "run-100-1" "sha-${REVISION}" "20260927-${REVISION:0:12}" "latest"; do
+for tag in "run-100-1" "sha-${REVISION}" "20260927-${REVISION:0:12}" "candidate" "latest"; do
   grep -Fq "${REPO}:${tag}" "$CALL_LOG" || {
     echo "FAIL: no publicó tag $tag" >&2
     exit 1
   }
 done
 
-[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 4 ]] || {
-  echo "FAIL: primera publicación esperaba 4 pushes" >&2
+[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 5 ]] || {
+  echo "FAIL: primera publicación esperaba 5 pushes" >&2
   cat "$CALL_LOG" >&2
   exit 1
 }
@@ -103,7 +103,7 @@ jq -e --arg digest "$DIGEST" --arg rev "$REVISION" '
   .digest == $digest
   and .source_revision == $rev
   and (.tags.immutable | length) == 3
-  and .tags.mutable == ["latest"]
+  and .tags.mutable == ["candidate", "latest"]
 ' "$identity_1" >/dev/null
 
 cat >"$REMOTE_MAP" <<EOF
@@ -114,8 +114,8 @@ EOF
 
 run_publish 101 1 "${TMP_DIR}/identity-2.json" >/dev/null
 
-[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 2 ]] || {
-  echo "FAIL: reutilización esperaba solo run tag + latest" >&2
+[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 3 ]] || {
+  echo "FAIL: reutilización esperaba run tag + candidate + latest" >&2
   cat "$CALL_LOG" >&2
   exit 1
 }
@@ -130,8 +130,8 @@ if run_publish 102 1 "${TMP_DIR}/identity-conflict.json" >/dev/null 2>&1; then
   exit 1
 fi
 
-if grep -Fq "${REPO}:latest" "$CALL_LOG"; then
-  echo "FAIL: latest se movió pese al conflicto" >&2
+if grep -Eq "${REPO}:(candidate|latest)" "$CALL_LOG"; then
+  echo "FAIL: candidate/latest se movieron pese al conflicto" >&2
   exit 1
 fi
 
