@@ -186,3 +186,17 @@ grep -Fq '      - scripts/security/**' "$workflow" || {
 }
 
 echo "OK: workflow de producción conserva los invariantes de Etapa 5."
+
+
+# ---------------------------------------------------------------------------
+# Los workflows temporales de investigación no deben llegar a main
+# ---------------------------------------------------------------------------
+for probe in   ".github/workflows/stage5-probe.yml"   ".github/workflows/stage5-grype-probe.yml"   ".github/workflows/stage5-grype-rootfs-probe.yml"   ".github/workflows/stage5-fedora-advisory-probe.yml"
+do
+  if [[ -e "${ROOT_DIR}/${probe}" ]]; then
+    echo "FAIL: quedó workflow temporal de Etapa 5: ${probe}" >&2
+    exit 1
+  fi
+done
+
+echo "OK: no quedan workflows temporales de investigación."
