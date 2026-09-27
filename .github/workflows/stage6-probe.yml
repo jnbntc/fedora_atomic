@@ -1,0 +1,64 @@
+name: Stage 6 Artifact Smoke Probe
+
+on:
+  push:
+    branches:
+      - test/stage-6-artifact-smoke
+    paths:
+      - .github/workflows/stage6-probe.yml
+
+concurrency:
+  group: stage6-artifact-smoke-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Login to GHCR via Podman
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build probe image
+        shell: bash
+        env:
+          CACHE_REPO: ghcr.io/${{ github.repository_owner }}/fedora_atomic/cache
+        run: |
+          set -Eeuo pipefail
+          CACHE_BUSTER="$(date -u +%Y%m%d)"
+
+          podman build \
+            --pull=always \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
+            --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
+            --cache-from="${CACHE_REPO}" \
+            -f Containerfile \
+            -t localhost/fedora-atomic-stage6:probe .
+
+      - name: Export squashed rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cid="$(podman create localhost/fedora-atomic-stage6:probe)"
+          trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+          mkdir -p rootfs security-evidence
+          podman export "$cid" | tar -x -C rootfs
+
+      - name: Run artifact smoke tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/smoke/test-image.sh \
+            localhost/fedora-atomic-stage6:probe \
+            rootfs \
+            files/etc \
+            2>&1 | tee security-evidence/artifact-smoke.txt
