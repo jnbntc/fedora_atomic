@@ -6,6 +6,8 @@ on:
       - test/stage-6-artifact-smoke
     paths:
       - .github/workflows/stage6-probe.yml
+      - scripts/smoke/**
+      - scripts/tests/test-smoke-contract.sh
 
 concurrency:
   group: stage6-artifact-smoke-probe
