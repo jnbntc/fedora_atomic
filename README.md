@@ -18,7 +18,7 @@ La arquitectura implementa un modelo estricto de **Desacople CI/CD**, desplazand
 El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 
 * **Push controlado:** cambios en `main` que afecten al `Containerfile`, al workflow de build o a futuros archivos de configuración de la imagen disparan un nuevo build.
-* **Nightly:** `cron: '17 22 * * *'` (22:17 UTC / 19:17 ART). El minuto 17 evita concentrar la ejecución exactamente al comienzo de la hora.
+* **Nightly:** `cron: '17 19 * * *'` (19:17 UTC / 16:17 ART). Así el `stable` diario suele estar listo antes de la primera ventana local de actualización de las 18:30.
 * **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones sobre ramas distintas de `main` construyen y validan la imagen, pero no publican identidades/tags OCI ni mueven `candidate`, `latest` o `stable`; tampoco escriben en el cache compartido de GHCR.
 
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
@@ -176,9 +176,9 @@ La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el 
 ### 8. Nivel CD: Host local
 El host local (notebook) opera como un nodo pasivo de consumo. Para uso normal se recomienda seguir el canal `stable`; `candidate` queda reservado para validación anticipada.
 
-La política `AutomaticUpdatePolicy=stage`, el timer alrededor de la 01:00 y `IdleExitTimeout=60` son **configuración host-local**, no archivos horneados actualmente dentro de la imagen OCI. Esto evita confundir el estado global reproducible con decisiones operativas del equipo concreto.
+La imagen incluye ahora un updater local verificado: resuelve `stable`, valida firma Cosign + provenance SLSA + SBOM SPDX y recién después prepara un rebase fijado por digest. Corre a las **18:30** y **02:30**, no hace catch-up al encender, trabaja con prioridad baja y **nunca reinicia automáticamente**.
 
-El procedimiento reproducible y los comandos de verificación están en **[docs/HOST-SETUP.md](docs/HOST-SETUP.md)**.
+El timer estándar `rpm-ostreed-automatic.timer` queda fuera de este flujo para evitar actualizaciones que no pasen por la verificación criptográfica local. Detalles en **[docs/HOST-SETUP.md](docs/HOST-SETUP.md)**.
 
 ---
 
