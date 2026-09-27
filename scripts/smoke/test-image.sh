@@ -208,6 +208,6 @@ main() {
   host_mode "$@"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${1:-}" == "--inside" || "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi
