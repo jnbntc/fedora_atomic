@@ -4,7 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-# shellcheck source=../smoke/test-image.sh
+# El source es relativo al root del checkout, resuelto en runtime tras cd.
+# shellcheck disable=SC1091
 source scripts/smoke/test-image.sh
 
 extract_install_packages() {
@@ -73,7 +74,7 @@ container_starship_version="$(
 }
 
 workflow=".github/workflows/build.yml"
-grep -Fq 'podman run --rm -i "$image_ref" bash -s -- --inside' scripts/smoke/test-image.sh || {
+grep -Fq "podman run --rm -i \"\$image_ref\" bash -s -- --inside" scripts/smoke/test-image.sh || {
   echo "FAIL: runner interno de smoke no mantiene stdin abierto con podman -i" >&2
   exit 1
 }
