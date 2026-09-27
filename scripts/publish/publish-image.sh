@@ -8,6 +8,7 @@ REVISION=""
 RUN_ID=""
 RUN_ATTEMPT=""
 IDENTITY_FILE="security-evidence/image-identity.json"
+DEFER_CHANNELS=0
 
 log()  { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
@@ -30,7 +31,11 @@ Tags:
   <YYYYMMDD>-<sha12>
   run-<run_id>-<attempt>
   candidate
+  candidate
   latest
+
+Opción:
+  --defer-channels   Publica solo identidades inmutables; candidate/latest quedan para una fase posterior.
 EOF
 }
 
@@ -133,6 +138,7 @@ while [[ $# -gt 0 ]]; do
     --run-id) RUN_ID="$2"; shift 2 ;;
     --run-attempt) RUN_ATTEMPT="$2"; shift 2 ;;
     --identity-file) IDENTITY_FILE="$2"; shift 2 ;;
+    --defer-channels) DEFER_CHANNELS=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Opción desconocida: $1" ;;
   esac
@@ -167,11 +173,15 @@ candidate_digest="$(publish_run_identity "$run_tag")"
 ensure_immutable_alias "$revision_tag" "$candidate_digest"
 ensure_immutable_alias "$date_tag" "$candidate_digest"
 
-log "Actualizando canal mutable candidate"
-push_tag_and_verify "candidate" "$candidate_digest"
+if (( DEFER_CHANNELS )); then
+  log "Canales mutables diferidos: candidate/latest se moverán después de firma y attestations."
+else
+  log "Actualizando canal mutable candidate"
+  push_tag_and_verify "candidate" "$candidate_digest"
 
-log "Actualizando alias mutable latest al final"
-push_tag_and_verify "latest" "$candidate_digest"
+  log "Actualizando alias mutable latest al final"
+  push_tag_and_verify "latest" "$candidate_digest"
+fi
 
 mkdir -p "$(dirname "$IDENTITY_FILE")"
 generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -188,6 +198,7 @@ jq -n \
   --arg revision_tag "$revision_tag" \
   --arg date_tag "$date_tag" \
   --arg run_tag "$run_tag" \
+  --arg defer_channels "$DEFER_CHANNELS" \
   '{
     schema_version: 1,
     repository: $repository,
@@ -200,9 +211,14 @@ jq -n \
     tags: {
       immutable: [$revision_tag, $date_tag, $run_tag],
       mutable: ["candidate", "latest"]
-    }
+    },
+    channels_deferred: ($defer_channels == "1")
   }' >"$IDENTITY_FILE"
 
 log "Identidad publicada: ${REPOSITORY}@${candidate_digest}"
 log "Tags inmutables: ${revision_tag}, ${date_tag}, ${run_tag}"
-log "Aliases mutables: candidate, latest"
+if (( DEFER_CHANNELS )); then
+  log "Aliases mutables diferidos: candidate, latest"
+else
+  log "Aliases mutables: candidate, latest"
+fi
