@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+REPOSITORY="${FEDORA_ATOMIC_REPOSITORY:-ghcr.io/jnbntc/fedora_atomic}"
+CHANNEL="${FEDORA_ATOMIC_CHANNEL:-stable}"
+SOURCE_REPOSITORY="${FEDORA_ATOMIC_SOURCE_REPOSITORY:-jnbntc/fedora_atomic}"
+SOURCE_REF="${FEDORA_ATOMIC_SOURCE_REF:-refs/heads/main}"
+WORKFLOW_PATH="${FEDORA_ATOMIC_WORKFLOW_PATH:-.github/workflows/build.yml}"
+
+COSIGN_BIN="${COSIGN_BIN:-cosign}"
+SKOPEO_BIN="${SKOPEO_BIN:-skopeo}"
+RPM_OSTREE_BIN="${RPM_OSTREE_BIN:-rpm-ostree}"
+JQ_BIN="${JQ_BIN:-jq}"
+
+log()  { printf '[verified-update] %s\n' "$*"; }
+warn() { printf '[verified-update] WARN: %s\n' "$*" >&2; }
+die()  { printf '[verified-update] ERROR: %s\n' "$*" >&2; exit 1; }
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Falta comando requerido: $1"
+}
+
+inside_update_window() {
+  local hhmm
+  hhmm="$(date +%H%M)"
+
+  # Ventanas deliberadamente fuera del horario laboral.
+  # También evita ejecuciones tardías al volver de suspend/encender la notebook.
+  if (( 10#$hhmm >= 220 && 10#$hhmm <= 310 )); then
+    return 0
+  fi
+  if (( 10#$hhmm >= 1820 && 10#$hhmm <= 1910 )); then
+    return 0
+  fi
+  return 1
+}
+
+if [[ "${FEDORA_ATOMIC_ALLOW_ANY_TIME:-0}" != "1" ]] && ! inside_update_window; then
+  log "Fuera de las ventanas 02:20-03:10 / 18:20-19:10; no se hace nada."
+  exit 0
+fi
+
+[[ "${EUID}" -eq 0 ]] || die "Debe ejecutarse como root"
+
+for cmd in "$COSIGN_BIN" "$SKOPEO_BIN" "$RPM_OSTREE_BIN" "$JQ_BIN"; do
+  require_cmd "$cmd"
+done
+
+log "Resolviendo canal ${CHANNEL}"
+inspect_json="$("$SKOPEO_BIN" inspect "docker://${REPOSITORY}:${CHANNEL}")"
+digest="$("$JQ_BIN" -r '.Digest // empty' <<<"$inspect_json")"
+revision="$("$JQ_BIN" -r '.Labels["org.opencontainers.image.revision"] // empty' <<<"$inspect_json")"
+
+[[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || die "Digest inválido: ${digest:-<vacío>}"
+[[ "$revision" =~ ^[0-9a-f]{40}$ ]] || die "Revision OCI inválida: ${revision:-<vacío>}"
+
+image_ref="${REPOSITORY}@${digest}"
+identity="https://github.com/${SOURCE_REPOSITORY}/${WORKFLOW_PATH}@${SOURCE_REF}"
+issuer="https://token.actions.githubusercontent.com"
+
+log "Verificando firma Cosign: ${digest}"
+"$COSIGN_BIN" verify \
+  --certificate-identity "$identity" \
+  --certificate-oidc-issuer "$issuer" \
+  --certificate-github-workflow-repository "$SOURCE_REPOSITORY" \
+  --certificate-github-workflow-ref "$SOURCE_REF" \
+  --certificate-github-workflow-sha "$revision" \
+  "$image_ref" >/dev/null
+
+log "Verificando provenance SLSA"
+"$COSIGN_BIN" verify-attestation \
+  --certificate-identity "$identity" \
+  --certificate-oidc-issuer "$issuer" \
+  --certificate-github-workflow-repository "$SOURCE_REPOSITORY" \
+  --certificate-github-workflow-ref "$SOURCE_REF" \
+  --certificate-github-workflow-sha "$revision" \
+  --type 'https://slsa.dev/provenance/v1' \
+  "$image_ref" >/dev/null
+
+log "Verificando SBOM SPDX"
+"$COSIGN_BIN" verify-attestation \
+  --certificate-identity "$identity" \
+  --certificate-oidc-issuer "$issuer" \
+  --certificate-github-workflow-repository "$SOURCE_REPOSITORY" \
+  --certificate-github-workflow-ref "$SOURCE_REF" \
+  --certificate-github-workflow-sha "$revision" \
+  --type 'https://spdx.dev/Document/v2.3' \
+  "$image_ref" >/dev/null
+
+log "Supply chain OK para revision ${revision}"
+
+status_json="$("$RPM_OSTREE_BIN" status --json)"
+booted_digest="$("$JQ_BIN" -r '
+  [.deployments[] | select(.booted == true) | .["container-image-reference-digest"] // empty][0] // empty
+' <<<"$status_json")"
+staged_digest="$("$JQ_BIN" -r '
+  [.deployments[] | select(.staged == true) | .["container-image-reference-digest"] // empty][0] // empty
+' <<<"$status_json")"
+staged_ref="$("$JQ_BIN" -r '
+  [.deployments[] | select(.staged == true) | .["container-image-reference"] // empty][0] // empty
+' <<<"$status_json")"
+
+if [[ "$booted_digest" == "$digest" ]]; then
+  log "El sistema ya está arrancado en stable ${digest}; sin cambios."
+  exit 0
+fi
+
+if [[ "$staged_digest" == "$digest" ]]; then
+  log "Stable ${digest} ya está staged; falta solamente reiniciar cuando sea conveniente."
+  exit 0
+fi
+
+if [[ -n "$staged_digest" ]]; then
+  if [[ "$staged_ref" == *"${REPOSITORY}"* ]]; then
+    log "Reemplazando deployment staged anterior gestionado por este updater: ${staged_digest}"
+    "$RPM_OSTREE_BIN" cleanup --pending
+  else
+    die "Hay un deployment staged ajeno (${staged_ref:-sin referencia}); no se reemplaza automáticamente."
+  fi
+fi
+
+target="ostree-unverified-registry:${REPOSITORY}@${digest}"
+log "Preparando deployment verificado: ${target}"
+"$RPM_OSTREE_BIN" rebase "$target"
+
+status_after="$("$RPM_OSTREE_BIN" status --json)"
+staged_after="$("$JQ_BIN" -r '
+  [.deployments[] | select(.staged == true) | .["container-image-reference-digest"] // empty][0] // empty
+' <<<"$status_after")"
+
+[[ "$staged_after" == "$digest" ]] \
+  || die "rpm-ostree no dejó staged el digest esperado: ${staged_after:-<vacío>}"
+
+log "Update preparado correctamente. NO se reinicia automáticamente."
+log "Nuevo stable staged: ${digest}"
