@@ -147,8 +147,8 @@ grep -Fq 'cyclonedx-json=security-evidence/sbom.cyclonedx.json' "$workflow" || {
   exit 1
 }
 
-grep -Fq 'anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439' "$workflow" || {
-  echo "FAIL: falta Grype action pinneada" >&2
+grep -Fq 'anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439' "$workflow" || {
+  echo "FAIL: falta download-grype pinneado" >&2
   exit 1
 }
 
@@ -162,8 +162,13 @@ grep -Fq 'dnf5 --refresh advisory list' "$workflow" || {
   exit 1
 }
 
-grep -Fq 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' "$workflow" || {
+grep -Fq 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' "$workflow" || {
   echo "FAIL: falta upload-artifact pinneado" >&2
+  exit 1
+}
+
+grep -Fq 'sbom:security-evidence/sbom.spdx.json' "$workflow" || {
+  echo "FAIL: Grype no consume el SBOM SPDX generado por Syft" >&2
   exit 1
 }
 
