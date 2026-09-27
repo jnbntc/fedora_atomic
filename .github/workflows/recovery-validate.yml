@@ -1,0 +1,43 @@
+name: Operations & Recovery Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - README.md
+      - docs/**
+      - .github/workflows/recovery-drill.yml
+      - .github/workflows/recovery-validate.yml
+      - scripts/recovery/**
+      - scripts/tests/test-recovery.sh
+      - scripts/security/verify-signed-image.sh
+      - scripts/smoke/test-image.sh
+      - security/vulnerability-policy.json
+
+jobs:
+  validate-recovery:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bash syntax
+        run: |
+          bash -n scripts/recovery/verify-stable.sh
+          bash -n scripts/recovery/rebase-stable.sh
+          bash -n scripts/recovery/capture-host-state.sh
+          bash -n scripts/tests/test-recovery.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/recovery/verify-stable.sh
+          shellcheck scripts/recovery/rebase-stable.sh
+          shellcheck scripts/recovery/capture-host-state.sh
+          shellcheck scripts/tests/test-recovery.sh
+
+      - name: Recovery contract tests
+        run: bash scripts/tests/test-recovery.sh
