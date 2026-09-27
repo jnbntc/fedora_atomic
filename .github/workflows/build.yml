@@ -1,4 +1,4 @@
-name: Fedora Atomic Core - Build & SecScan
+name: Fedora Atomic Core - Build & Security Gate
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
       - Containerfile
       - .github/workflows/build.yml
       - files/**
+      - security/**
+      - scripts/security/**
   schedule:
     - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
@@ -22,9 +24,6 @@ env:
   IMAGE_TAG: latest
 
 jobs:
-  # -------------------------------------------------------------------------
-  # BUILD: COMPILACIÓN, ESCANEO Y DESPLIEGUE INMUTABLE
-  # -------------------------------------------------------------------------
   build-scan-push:
     runs-on: ubuntu-latest
     permissions:
@@ -35,15 +34,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # 1. Autenticación OCI temprana
       - name: Login to GHCR via Podman
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # 2. Compilación con Cache-Buster diario, etiquetas OCI y reintentos
       - name: Build OCI Image with Podman
+        shell: bash
         run: |
-          DATE_TAG=$(date -u +%Y%m%d)
+          set -Eeuo pipefail
+
+          DATE_TAG="$(date -u +%Y%m%d)"
           CACHE_BUSTER="${DATE_TAG}"
           echo "DATE_TAG=${DATE_TAG}" >> "${GITHUB_ENV}"
 
@@ -54,43 +54,183 @@ jobs:
 
           n=0
           max=3
-          until [ $n -ge $max ]; do
-            podman build \
+          until [[ $n -ge $max ]]; do
+            if podman build \
               --pull=always \
               --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
               --label "org.opencontainers.image.description=Fedora Atomic Core Inmutable" \
               --build-arg CACHE_BUSTER="${CACHE_BUSTER}" \
               "${cache_args[@]}" \
               -f Containerfile \
-              -t ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} \
-              -t ${{ env.IMAGE_NAME }}:${DATE_TAG} . && break
-            n=$((n+1))
-            echo "::warning::Fallo en la transacción RPM o red. Reintentando en 15 segundos (Intento $n/$max)..."
+              -t "${IMAGE_NAME}:${IMAGE_TAG}" \
+              -t "${IMAGE_NAME}:${DATE_TAG}" .; then
+              break
+            fi
+
+            n=$((n + 1))
+            if [[ $n -ge $max ]]; then
+              echo "::error::Build falló tras ${max} intentos."
+              exit 1
+            fi
+
+            echo "::warning::Fallo en la transacción RPM o red. Reintentando en 15 segundos (Intento $((n + 1))/${max})..."
             sleep 15
           done
 
-          # Validación de integridad del artefacto antes de exportar
-          podman image exists ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} || exit 1
+          podman image exists "${IMAGE_NAME}:${IMAGE_TAG}"
 
-          # Exportación temporal para el escaneo local
-          podman save --format docker-archive -o fedora-atomic.tar ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+      - name: Export squashed rootfs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
 
-      # 3. Escaneo advisory actual. En Etapa 5 se reemplazará por validación
-      #    compatible con Fedora/OSTree + SBOM y política de bloqueo explícita.
-      - name: Run Trivy Vulnerability Scanner (advisory)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+          cid="$(podman create "${IMAGE_NAME}:${IMAGE_TAG}")"
+          trap 'podman rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+          rm -rf rootfs security-evidence
+          mkdir -p rootfs security-evidence
+          podman export "$cid" | tar -x -C rootfs
+
+          test -f rootfs/usr/lib/os-release
+          test -f rootfs/usr/share/rpm/rpmdb.sqlite
+
+      - name: Download pinned Syft
+        id: syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
-          input: 'fedora-atomic.tar'
-          format: 'table'
-          exit-code: '0'
-          ignore-unfixed: true
-          vuln-type: 'os'
-          scanners: 'vuln'
-          severity: 'CRITICAL,HIGH'
+          syft-version: v1.52.0
 
-      # 4. Despliegue unificado de tags inmutables y flotantes post-build
+      - name: Generate SPDX and CycloneDX SBOMs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          "${{ steps.syft.outputs.cmd }}" dir:rootfs \
+            -o spdx-json=security-evidence/sbom.spdx.json \
+            -o cyclonedx-json=security-evidence/sbom.cyclonedx.json
+
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
+            security-evidence/sbom.spdx.json >/dev/null
+
+          jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' \
+            security-evidence/sbom.cyclonedx.json >/dev/null
+
+          rpm_packages="$(
+            jq '[
+              .packages[]?
+              | select(
+                  any(
+                    .externalRefs[]?;
+                    .referenceType == "purl"
+                    and (.referenceLocator | startswith("pkg:rpm/"))
+                  )
+                )
+            ] | length' security-evidence/sbom.spdx.json
+          )"
+
+          echo "RPM packages in SBOM: ${rpm_packages}"
+          (( rpm_packages > 0 ))
+
+      - name: Download pinned Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          grype-version: v0.119.0
+          cache-db: true
+
+      - name: Grype advisory scan of SBOM
+        shell: bash
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: |
+          set -Eeuo pipefail
+
+          "${{ steps.grype.outputs.cmd }}" sbom:security-evidence/sbom.spdx.json \
+            --by-cve \
+            --output json \
+            --file security-evidence/grype-advisory.json
+
+          jq -e '.distro.name == "fedora" and .distro.version == "44"' \
+            security-evidence/grype-advisory.json >/dev/null
+
+          jq '{
+            distro: .distro,
+            total_matches: (.matches | length),
+            by_severity: (
+              [.matches[]?.vulnerability.severity]
+              | group_by(.)
+              | map({key: .[0], value: length})
+              | from_entries
+            ),
+            namespaces: ([.matches[]?.vulnerability.namespace] | unique)
+          }' security-evidence/grype-advisory.json \
+            | tee security-evidence/grype-summary.json
+
+      - name: Query Fedora native security advisories
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          expected_name="$(jq -r '.expected_distro.name' security/vulnerability-policy.json)"
+          expected_version="$(jq -r '.expected_distro.version' security/vulnerability-policy.json)"
+
+          podman run --rm \
+            -e EXPECTED_NAME="${expected_name}" \
+            -e EXPECTED_VERSION="${expected_version}" \
+            -v "${PWD}/security-evidence:/evidence" \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            bash -lc '
+              set -Eeuo pipefail
+              . /usr/lib/os-release
+
+              [[ "$ID" == "$EXPECTED_NAME" ]]
+              [[ "$VERSION_ID" == "$EXPECTED_VERSION" ]]
+              test -f /usr/share/rpm/rpmdb.sqlite
+
+              dnf5 --refresh advisory list \
+                --available \
+                --security \
+                --with-cve \
+                --json > /evidence/fedora-security-advisories.json
+            '
+
+          jq -e 'type == "array"' security-evidence/fedora-security-advisories.json >/dev/null
+
+      - name: Evaluate Fedora security gate
+        id: fedora_gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/security/evaluate-fedora-advisories.sh \
+            security-evidence/fedora-security-advisories.json \
+            security/vulnerability-policy.json \
+            2>&1 | tee security-evidence/fedora-security-gate.txt
+
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-atomic-security-${{ github.sha }}
+          path: |
+            security-evidence/sbom.spdx.json
+            security-evidence/sbom.cyclonedx.json
+            security-evidence/grype-advisory.json
+            security-evidence/grype-summary.json
+            security-evidence/fedora-security-advisories.json
+            security-evidence/fedora-security-gate.txt
+          retention-days: 30
+          if-no-files-found: warn
+          compression-level: 6
+
+      - name: Enforce Fedora Security Gate
+        if: steps.fedora_gate.outcome == 'failure'
+        run: |
+          echo "::error::El gate de seguridad Fedora bloqueó la publicación. Revisar el artefacto fedora-atomic-security-${{ github.sha }}."
+          exit 1
+
       - name: Push Built Image
         if: github.ref == 'refs/heads/main'
         run: |
-          podman push ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          podman push ${{ env.IMAGE_NAME }}:${{ env.DATE_TAG }}
+          podman push "${IMAGE_NAME}:${IMAGE_TAG}"
+          podman push "${IMAGE_NAME}:${DATE_TAG}"
