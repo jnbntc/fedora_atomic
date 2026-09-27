@@ -1,0 +1,130 @@
+name: Repository Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  config:
+    name: Declarative config
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash syntax
+        run: bash -n scripts/tests/test-config-tree.sh
+      - name: ShellCheck
+        run: shellcheck scripts/tests/test-config-tree.sh
+      - name: Validate config tree
+        run: bash scripts/tests/test-config-tree.sh
+
+  image-contract:
+    name: Image hardening & smoke contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash syntax
+        run: |
+          bash -n scripts/tests/test-build-hardening.sh
+          bash -n scripts/smoke/test-image.sh
+          bash -n scripts/tests/test-smoke-contract.sh
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/tests/test-build-hardening.sh
+          shellcheck scripts/smoke/test-image.sh
+          shellcheck scripts/tests/test-smoke-contract.sh
+      - name: Build hardening contract
+        run: bash scripts/tests/test-build-hardening.sh
+      - name: Artifact smoke contract
+        run: bash scripts/tests/test-smoke-contract.sh
+
+  security-release:
+    name: Security, identity & supply chain
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash syntax
+        run: |
+          bash -n scripts/security/evaluate-fedora-advisories.sh
+          bash -n scripts/security/verify-signed-image.sh
+          bash -n scripts/publish/publish-image.sh
+          bash -n scripts/publish/publish-channels.sh
+          bash -n scripts/publish/promote-stable.sh
+          bash -n scripts/cleanup-ghcr.sh
+          bash -n scripts/tests/test-security-gate.sh
+          bash -n scripts/tests/test-publish-identity.sh
+          bash -n scripts/tests/test-publish-channels.sh
+          bash -n scripts/tests/test-promote-stable.sh
+          bash -n scripts/tests/test-supply-chain-verification.sh
+          bash -n scripts/tests/test-cleanup-ghcr.sh
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/security/evaluate-fedora-advisories.sh
+          shellcheck scripts/security/verify-signed-image.sh
+          shellcheck scripts/publish/publish-image.sh
+          shellcheck scripts/publish/publish-channels.sh
+          shellcheck scripts/publish/promote-stable.sh
+          shellcheck scripts/cleanup-ghcr.sh
+          shellcheck scripts/tests/test-security-gate.sh
+          shellcheck scripts/tests/test-publish-identity.sh
+          shellcheck scripts/tests/test-publish-channels.sh
+          shellcheck scripts/tests/test-promote-stable.sh
+          shellcheck scripts/tests/test-supply-chain-verification.sh
+          shellcheck scripts/tests/test-cleanup-ghcr.sh
+      - name: Validate security policy
+        run: |
+          jq -e '
+            .schema_version == 1
+            and .engine == "dnf5-advisory"
+            and .expected_distro.name == "fedora"
+            and .expected_distro.version == "44"
+            and .scope.mode == "available"
+            and .scope.type == "security"
+            and (.block_severities | map(ascii_downcase) | sort) == ["critical", "important"]
+            and (.advisory_severities | map(ascii_downcase) | sort) == ["low", "moderate"]
+          ' security/vulnerability-policy.json >/dev/null
+      - name: Fedora security gate tests
+        run: bash scripts/tests/test-security-gate.sh
+      - name: Immutable identity tests
+        run: bash scripts/tests/test-publish-identity.sh
+      - name: Mutable channel tests
+        run: bash scripts/tests/test-publish-channels.sh
+      - name: Stable promotion tests
+        run: bash scripts/tests/test-promote-stable.sh
+      - name: Supply-chain verification tests
+        run: bash scripts/tests/test-supply-chain-verification.sh
+      - name: Cleanup regression tests
+        run: bash scripts/tests/test-cleanup-ghcr.sh
+
+  recovery:
+    name: Operations & recovery
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash syntax
+        run: |
+          bash -n scripts/recovery/verify-stable.sh
+          bash -n scripts/recovery/rebase-stable.sh
+          bash -n scripts/recovery/capture-host-state.sh
+          bash -n scripts/tests/test-recovery.sh
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/recovery/verify-stable.sh
+          shellcheck scripts/recovery/rebase-stable.sh
+          shellcheck scripts/recovery/capture-host-state.sh
+          shellcheck scripts/tests/test-recovery.sh
+      - name: Recovery contract tests
+        run: bash scripts/tests/test-recovery.sh
