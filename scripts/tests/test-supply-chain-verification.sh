@@ -104,6 +104,21 @@ grep -Fq 'actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504d
   exit 1
 }
 
+grep -Fq 'sbom.attest.spdx.json' "$build_workflow" || {
+  echo "FAIL: falta la vista SPDX compacta para attestation" >&2
+  exit 1
+}
+
+grep -Fq 'attest_bytes < 16777216' "$build_workflow" || {
+  echo "FAIL: no se valida el límite de 16 MiB de la SBOM attestation" >&2
+  exit 1
+}
+
+grep -Fq 'sbom-path: security-evidence/sbom.attest.spdx.json' "$build_workflow" || {
+  echo "FAIL: la attestation SBOM no usa la vista compacta" >&2
+  exit 1
+}
+
 grep -Fq 'actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6' "$build_workflow" || {
   echo "FAIL: SBOM attestation action no está pinneada" >&2
   exit 1

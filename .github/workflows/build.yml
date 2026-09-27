@@ -148,6 +148,30 @@ jobs:
           echo "RPM packages in SBOM: ${rpm_packages}"
           (( rpm_packages > 0 ))
 
+          jq '
+            del(.files)
+            | .packages |= map(
+                del(.sourceInfo, .originator, .packageVerificationCode, .checksums)
+                | if has("externalRefs") then
+                    .externalRefs |= map(select(.referenceType == "purl"))
+                  else . end
+              )
+            | .relationships |= map(select(.relationshipType == "DESCRIBES"))
+          ' security-evidence/sbom.spdx.json \
+            > security-evidence/sbom.attest.spdx.json
+
+          full_packages="$(jq '.packages | length' security-evidence/sbom.spdx.json)"
+          attest_packages="$(jq '.packages | length' security-evidence/sbom.attest.spdx.json)"
+          attest_bytes="$(stat -c '%s' security-evidence/sbom.attest.spdx.json)"
+
+          [[ "${full_packages}" -eq "${attest_packages}" ]]
+          jq -e '.spdxVersion == "SPDX-2.3" and (.packages | length > 0)' \
+            security-evidence/sbom.attest.spdx.json >/dev/null
+          (( attest_bytes < 16777216 ))
+
+          echo "Attestation SPDX packages: ${attest_packages}"
+          echo "Attestation SPDX size: ${attest_bytes} bytes"
+
       - name: Download pinned Grype
         id: grype
         uses: anchore/scan-action/download-grype@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
@@ -231,6 +255,7 @@ jobs:
           name: fedora-atomic-security-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             security-evidence/sbom.spdx.json
+            security-evidence/sbom.attest.spdx.json
             security-evidence/sbom.cyclonedx.json
             security-evidence/grype-advisory.json
             security-evidence/grype-summary.json
@@ -316,7 +341,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           [[ "${IMAGE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
-          jq -e '.spdxVersion == "SPDX-2.3"' security-evidence/sbom.spdx.json >/dev/null
+          jq -e '.spdxVersion == "SPDX-2.3"' security-evidence/sbom.attest.spdx.json >/dev/null
+          (( $(stat -c '%s' security-evidence/sbom.attest.spdx.json) < 16777216 ))
           echo "IMAGE_REF=${IMAGE_NAME}@${IMAGE_DIGEST}" >> "${GITHUB_ENV}"
 
       - name: Keyless sign image digest
@@ -339,7 +365,7 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ env.IMAGE_DIGEST }}
-          sbom-path: security-evidence/sbom.spdx.json
+          sbom-path: security-evidence/sbom.attest.spdx.json
           push-to-registry: true
 
       - name: Collect attestation bundles
