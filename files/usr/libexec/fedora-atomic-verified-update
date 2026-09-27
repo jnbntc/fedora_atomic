@@ -40,7 +40,9 @@ if [[ "${FEDORA_ATOMIC_ALLOW_ANY_TIME:-0}" != "1" ]] && ! inside_update_window; 
   exit 0
 fi
 
-[[ "${EUID}" -eq 0 ]] || die "Debe ejecutarse como root"
+if [[ "${FEDORA_ATOMIC_ALLOW_NON_ROOT:-0}" != "1" ]]; then
+  [[ "${EUID}" -eq 0 ]] || die "Debe ejecutarse como root"
+fi
 
 for cmd in "$COSIGN_BIN" "$SKOPEO_BIN" "$RPM_OSTREE_BIN" "$JQ_BIN"; do
   require_cmd "$cmd"
