@@ -165,3 +165,80 @@ fi
 unset FAKE_FATAL_TAG
 
 echo "OK: promoción stable, stale-candidate y fail-closed validados."
+
+
+# ---------------------------------------------------------------------------
+# Contrato estático del workflow de promoción
+# ---------------------------------------------------------------------------
+workflow="${ROOT_DIR}/.github/workflows/promote-stable.yml"
+build_workflow="${ROOT_DIR}/.github/workflows/build.yml"
+
+grep -Fq 'workflow_run:' "$workflow" || {
+  echo "FAIL: promoción no se dispara desde workflow_run" >&2
+  exit 1
+}
+
+grep -Fq 'Fedora Atomic Core - Build & Security Gate' "$workflow" || {
+  echo "FAIL: promoción no está ligada al workflow de build correcto" >&2
+  exit 1
+}
+
+grep -Fq "github.event.workflow_run.conclusion == 'success'" "$workflow" || {
+  echo "FAIL: promoción no exige build exitoso" >&2
+  exit 1
+}
+
+grep -Fq "github.event.workflow_run.head_branch == 'main'" "$workflow" || {
+  echo "FAIL: promoción no está limitada a main" >&2
+  exit 1
+}
+
+grep -Fq 'group: fedora-atomic-release' "$workflow" || {
+  echo "FAIL: promoción no usa el lock compartido de release" >&2
+  exit 1
+}
+
+grep -Fq "github.ref == 'refs/heads/main' && 'release'" "$build_workflow" || {
+  echo "FAIL: build de main no comparte el lock de release" >&2
+  exit 1
+}
+
+grep -Fq 'ref: ${{ github.event.workflow_run.head_sha }}' "$workflow" || {
+  echo "FAIL: promoción no checkout-ea la revision exacta" >&2
+  exit 1
+}
+
+grep -Fq 'IMAGE_REF="${IMAGE_NAME}:sha-${REVISION}"' "$workflow" || {
+  echo "FAIL: promoción no valida la identidad inmutable sha-<commit>" >&2
+  exit 1
+}
+
+grep -Fq 'bash scripts/smoke/test-image.sh' "$workflow" || {
+  echo "FAIL: promoción no repite smoke tests" >&2
+  exit 1
+}
+
+grep -Fq 'dnf5 --refresh advisory list' "$workflow" || {
+  echo "FAIL: promoción no repite advisories Fedora" >&2
+  exit 1
+}
+
+grep -Fq 'evaluate-fedora-advisories.sh' "$workflow" || {
+  echo "FAIL: promoción no aplica el Fedora security gate" >&2
+  exit 1
+}
+
+enforce_line="$(grep -n 'Enforce candidate validation' "$workflow" | cut -d: -f1)"
+promote_line="$(grep -n 'Promote candidate to stable' "$workflow" | cut -d: -f1)"
+
+[[ -n "$enforce_line" && -n "$promote_line" && "$enforce_line" -lt "$promote_line" ]] || {
+  echo "FAIL: candidate debe validarse antes de promover stable" >&2
+  exit 1
+}
+
+grep -Fq 'scripts/publish/promote-stable.sh' "$workflow" || {
+  echo "FAIL: workflow no usa el promotor race-safe" >&2
+  exit 1
+}
+
+echo "OK: contrato candidate → stable validado."
