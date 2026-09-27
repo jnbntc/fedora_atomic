@@ -165,4 +165,43 @@ if grep -q '^podman push ' "$CALL_LOG"; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Caso 6: publicación diferida no mueve candidate/latest.
+# ---------------------------------------------------------------------------
+: >"$REMOTE_MAP"
+: >"$CALL_LOG"
+export FAKE_REVISION="$REVISION"
+
+identity_6="${TMP_DIR}/identity-deferred.json"
+bash "$SCRIPT" \
+  --local-image localhost/fedora:latest \
+  --repository "$REPO" \
+  --date 20260927 \
+  --revision "$REVISION" \
+  --run-id 105 \
+  --run-attempt 1 \
+  --identity-file "$identity_6" \
+  --defer-channels >/dev/null
+
+for tag in "run-105-1" "sha-${REVISION}" "20260927-${REVISION:0:12}"; do
+  grep -Fq "${REPO}:${tag}" "$CALL_LOG" || {
+    echo "FAIL: publicación diferida no creó $tag" >&2
+    exit 1
+  }
+done
+
+if grep -Eq "${REPO}:(candidate|latest)" "$CALL_LOG"; then
+  echo "FAIL: publicación diferida movió candidate/latest" >&2
+  cat "$CALL_LOG" >&2
+  exit 1
+fi
+
+[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 3 ]] || {
+  echo "FAIL: publicación diferida esperaba 3 pushes" >&2
+  cat "$CALL_LOG" >&2
+  exit 1
+}
+
+jq -e '.channels_deferred == true' "$identity_6" >/dev/null
+
 echo "OK: identidad OCI inmutable, conflicto y fail-closed validados."
