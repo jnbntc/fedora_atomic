@@ -74,6 +74,7 @@ export PATH="${BIN}:${PATH}"
 export FAKE_LOG="$LOG"
 export FAKE_STATE="$STATE"
 export FEDORA_ATOMIC_ALLOW_ANY_TIME=1
+export FEDORA_ATOMIC_ALLOW_NON_ROOT=1
 export FEDORA_ATOMIC_REPOSITORY="$REPO"
 
 # Caso 1: ya booted en stable -> verifica supply chain pero no rebasea.
