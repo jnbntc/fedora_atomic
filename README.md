@@ -19,7 +19,7 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 
 * **Push controlado:** cambios en `main` que afecten al `Containerfile`, al workflow de build o a futuros archivos de configuración de la imagen disparan un nuevo build.
 * **Nightly:** `cron: '17 22 * * *'` (22:17 UTC / 19:17 ART). El minuto 17 evita concentrar la ejecución exactamente al comienzo de la hora.
-* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones manuales sobre ramas distintas de `main` construyen y validan la imagen, pero no publican `latest`/`YYYYMMDD` ni escriben en el cache compartido de GHCR; solo pueden reutilizarlo como fuente.
+* **Ejecución manual:** `workflow_dispatch` permanece disponible para validaciones y recuperación. Las ejecuciones sobre ramas distintas de `main` construyen y validan la imagen, pero no publican identidades/tags OCI ni mueven `candidate`, `latest` o `stable`; tampoco escriben en el cache compartido de GHCR.
 
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
@@ -173,10 +173,12 @@ Los symlinks de servicios habilitados permanecen por ahora explícitos en el `Co
 
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 
-### 8. Nivel CD: Local Staging
+### 8. Nivel CD: Host local
 El host local (notebook) opera como un nodo pasivo de consumo. Para uso normal se recomienda seguir el canal `stable`; `candidate` queda reservado para validación anticipada.
-* **Staging Asíncrono:** a través de un *drop-in* de Systemd (`rpm-ostreed-automatic.timer`), el host descarga los deltas diariamente a la 01:00 AM (o al encenderse vía `Persistent=true`) y pre-ensambla el árbol en disco (`AutomaticUpdatePolicy=stage`).
-* **RAM Optimization:** `rpm-ostreed.conf` forzado a `IdleExitTimeout=60` para evicción estricta de memoria, liberando recursos para cargas locales (LLMs y telemetría).
+
+La política `AutomaticUpdatePolicy=stage`, el timer alrededor de la 01:00 y `IdleExitTimeout=60` son **configuración host-local**, no archivos horneados actualmente dentro de la imagen OCI. Esto evita confundir el estado global reproducible con decisiones operativas del equipo concreto.
+
+El procedimiento reproducible y los comandos de verificación están en **[docs/HOST-SETUP.md](docs/HOST-SETUP.md)**.
 
 ---
 
@@ -199,10 +201,28 @@ Paquetes excluidos intencionalmente de la imagen OCI debido a la ejecución de s
 
 ---
 
-## 🛠️ Disaster Recovery & Mantenimiento Local
+## 🛠️ Operaciones & Disaster Recovery
 
-### Forzar actualización (Bypass de Systemd)
+La operación diaria y la recuperación quedan documentadas como runbooks versionados:
+
+- **[docs/OPERATIONS.md](docs/OPERATIONS.md)** — canales, workflows, evidencia, fallos y checklist operativo.
+- **[docs/HOST-SETUP.md](docs/HOST-SETUP.md)** — configuración host-local de rpm-ostreed/timer y verificación post-boot.
+- **[docs/DISASTER-RECOVERY.md](docs/DISASTER-RECOVERY.md)** — verificación criptográfica de `stable`, rebase fijado por digest, rollback y recuperación desde cero.
+
+Helpers:
+
 ```bash
-rpm-ostree upgrade
-sudo systemctl reboot
+# Verificar firma + provenance + SBOM de stable
+export GH_TOKEN="$(gh auth token)"
+bash scripts/recovery/verify-stable.sh
+
+# Inventario no secreto del host
+bash scripts/recovery/capture-host-state.sh
+
+# Verificar y preparar recovery sin modificar el host
+bash scripts/recovery/rebase-stable.sh
 ```
+
+El workflow **Stable Disaster Recovery Drill** ejecuta mensualmente una restauración lógica no destructiva del artefacto `stable`: verifica supply chain, descarga el digest exacto, ejecuta smoke tests y Fedora security gate, y conserva evidencia durante 90 días.
+
+> El repositorio reconstruye el sistema base; no sustituye un backup de `$HOME`, secretos, VMs, credenciales ni datos de aplicaciones.
