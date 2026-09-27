@@ -182,7 +182,7 @@ host_mode() {
   compare_declared_config "$rootfs" "$expected_root"
 
   script_path="$(readlink -f "${BASH_SOURCE[0]}")"
-  podman run --rm "$image_ref" bash -s -- --inside < "$script_path"
+  podman run --rm -i "$image_ref" bash -s -- --inside < "$script_path"
 
   {
     echo "### Artifact smoke tests"
