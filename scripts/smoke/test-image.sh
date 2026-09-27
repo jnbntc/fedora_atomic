@@ -94,9 +94,17 @@ inside_image() {
 
   missing_packages=()
   for package in "${REQUIRED_PACKAGES[@]}"; do
-    if ! rpm -q "$package" >/dev/null 2>&1; then
-      missing_packages+=("$package")
+    if rpm -q "$package" >/dev/null 2>&1; then
+      continue
     fi
+
+    if rpm -q --whatprovides "$package" >/dev/null 2>&1; then
+      provider="$(rpm -q --whatprovides "$package" | head -n1)"
+      info "$package satisfecho por provider instalado: $provider"
+      continue
+    fi
+
+    missing_packages+=("$package")
   done
 
   if (( ${#missing_packages[@]} > 0 )); then
