@@ -13,14 +13,6 @@ on:
         options:
           - dry-run
           - apply
-  pull_request:
-    branches:
-      - main
-    paths:
-      - .github/workflows/cleanup.yml
-      - scripts/cleanup-ghcr.sh
-      - scripts/tests/test-cleanup-ghcr.sh
-
 concurrency:
   group: ghcr-cleanup-${{ github.ref }}
   cancel-in-progress: false
@@ -52,7 +44,7 @@ jobs:
   cleanup:
     name: Cleanup GHCR
     needs: validate
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
