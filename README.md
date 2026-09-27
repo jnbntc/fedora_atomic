@@ -29,7 +29,7 @@ El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como má
 * **Fedora Security Gate:** `dnf5 advisory` consulta la metadata nativa de Fedora contra el rpmdb exacto de la imagen recién construida. La política versionada en `security/vulnerability-policy.json` bloquea advisories `Critical` e `Important` disponibles; `Moderate` y `Low` son informativos.
 * **Grype advisory:** Grype `v0.119.0` analiza el SBOM como capa complementaria para dependencias embebidas (Go, Python, CPE, etc.). No se usa como autoridad para CVE del SO porque los probes de Etapa 5 comprobaron que no asociaba los RPM OSTree con namespaces Fedora.
 * **Evidencia:** cada build conserva por 30 días el resultado de smoke tests, los dos SBOM, el reporte Grype y el JSON de advisories Fedora como artifact de GitHub Actions.
-* **Registro e identidad:** `latest` es el único alias deliberadamente mutable. Cada publicación crea `sha-<commit40>`, `YYYYMMDD-<sha12>` y `run-<run_id>-<attempt>`, todos asociados al mismo digest OCI. Si un tag inmutable existente apunta a otro digest, la publicación se bloquea antes de mover `latest`. La firma criptográfica todavía se incorporará en una etapa posterior.
+* **Registro e identidad:** cada publicación crea `sha-<commit40>`, `YYYYMMDD-<sha12>` y `run-<run_id>-<attempt>`, todos asociados al mismo digest OCI. `candidate` y `latest` se mueven al build validado más reciente; `stable` solo se mueve después de una segunda validación del artefacto ya descargado desde GHCR. Si un tag inmutable existente apunta a otro digest, la publicación se bloquea antes de mover los canales mutables. La firma criptográfica todavía se incorporará en una etapa posterior.
 
 ### 2. Política de seguridad del artefacto
 
@@ -51,7 +51,14 @@ podman build
                               ├── sha-<commit40>
                               ├── YYYYMMDD-<sha12>
                               ├── run-<id>-<attempt>
-                              └── latest (mutable, último paso)
+                              ├── candidate (mutable)
+                              └── latest (mutable)
+                                    │
+                                    └── promotion workflow
+                                          ├── pull sha-<commit>
+                                          ├── smoke tests otra vez
+                                          ├── Fedora gate otra vez
+                                          └── stable (mutable)
 ```
 
 La fuente autoritativa para el gate del sistema operativo es la metadata de advisories de Fedora, consultada con `dnf5 --refresh advisory list --available --security --with-cve --json`. Esto evita interpretar como “0 CVE” un scanner genérico que reconoce Fedora pero no tiene cobertura de matching para los RPM del OSTree.
@@ -67,16 +74,33 @@ run-<run_id>-<attempt>  ── push inicial ──► digest sha256:...
                                       │
                                       ├── sha-<commit40>
                                       ├── YYYYMMDD-<sha12>
-                                      └── latest  ← se mueve al final
+                                      ├── candidate
+      └── latest
 ```
 
-Los tres primeros tags son gestionados como **inmutables por política**. Antes de crear `sha-...` o el tag fecha+commit, el pipeline consulta GHCR con Skopeo. Si el tag ya existe con el mismo digest se reutiliza; si apunta a otro digest, el workflow falla y `latest` queda intacto. Esto también detecta el caso importante de un mismo commit que intenta producir un artefacto diferente en una ejecución posterior.
+Los tres tags de identidad son gestionados como **inmutables por política**. Antes de crear `sha-...` o el tag fecha+commit, el pipeline consulta GHCR con Skopeo. Si el tag ya existe con el mismo digest se reutiliza; si apunta a otro digest, el workflow falla y `candidate`/`latest` quedan intactos. Esto también detecta el caso importante de un mismo commit que intenta producir un artefacto diferente en una ejecución posterior.
 
 Cada publicación exitosa genera `security-evidence/image-identity.json` con repositorio, digest, commit, run ID, attempt y tags. Ese archivo se conserva como artifact durante 90 días.
 
+### 4. Promoción candidate → stable
+
+`candidate` representa el build de `main` más reciente que completó build, smoke tests y security gate. La promoción a `stable` se ejecuta automáticamente con `.github/workflows/promote-stable.yml` después de un build exitoso.
+
+La promoción **no reconstruye** la imagen: descarga `sha-<commit40>` desde GHCR y vuelve a ejecutar sobre ese artefacto publicado:
+
+1. smoke tests funcionales;
+2. consulta `dnf5 advisory` contra Fedora;
+3. Fedora security gate.
+
+`main` y la promoción comparten el lock `fedora-atomic-release`. Si un build nuevo se adelanta, el promotor viejo compara el digest de su `sha-<commit>` con el `candidate` actual y termina sin tocar `stable`. Por eso una promoción atrasada no puede pisar un candidate más nuevo.
+
+El canal recomendado para un host que prioriza estabilidad es **`stable`**. `candidate` es útil para pruebas anticipadas y `latest` conserva la semántica de “último build validado”.
+
+Cada promoción conserva evidencia funcional y Fedora durante 30 días y un `stable-promotion.json` durante 90 días.
+
 El cleanup de GHCR solo puede purgar tags de identidad gestionados (incluyendo el formato diario legado). Si una versión lleva un tag desconocido como `stable`, `candidate` o una futura versión semántica, queda protegida por defecto.
 
-### 4. Mantenimiento de GHCR
+### 5. Mantenimiento de GHCR
 La retención del registro está desacoplada del build y se gestiona mediante `.github/workflows/cleanup.yml` y `scripts/cleanup-ghcr.sh`.
 
 * **Schedule:** domingo 04:37 UTC / 01:37 ART.
@@ -85,7 +109,7 @@ La retención del registro está desacoplada del build y se gestiona mediante `.
 * **Retención:** elimina versiones `untagged`; para `fedora_atomic` solo considera purgables versiones cuyos tags sean exclusivamente formatos gestionados (`YYYYMMDD` legado, `YYYYMMDD-SHA12`, `sha-SHA40`, `run-ID-ATTEMPT`). `latest` y cualquier tag especial/desconocido quedan protegidos. Conserva los últimos 14 días y además los 5 builds antiguos más recientes. Para `fedora_atomic/cache`, conserva todas las versiones etiquetadas de los últimos 14 días y garantiza un piso de 100 versiones etiquetadas recientes; las versiones de cache más antiguas que ambos límites se purgan.
 * **Validación:** cada PR que modifica esta lógica ejecuta `bash -n`, ShellCheck y pruebas unitarias con un `gh` simulado, sin tocar GHCR.
 
-### 5. Configuración declarativa del rootfs
+### 6. Configuración declarativa del rootfs
 La configuración propia del sistema ya no se genera mediante `echo` dentro del `Containerfile`. Se versiona directamente bajo `files/etc/` y se incorpora a la imagen mediante `COPY`.
 
 Actualmente el árbol incluye:
@@ -108,8 +132,8 @@ Los symlinks de servicios habilitados permanecen por ahora explícitos en el `Co
 
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 
-### 6. Nivel CD: Local Staging
-El host local (notebook) opera como un nodo pasivo de consumo.
+### 7. Nivel CD: Local Staging
+El host local (notebook) opera como un nodo pasivo de consumo. Para uso normal se recomienda seguir el canal `stable`; `candidate` queda reservado para validación anticipada.
 * **Staging Asíncrono:** a través de un *drop-in* de Systemd (`rpm-ostreed-automatic.timer`), el host descarga los deltas diariamente a la 01:00 AM (o al encenderse vía `Persistent=true`) y pre-ensambla el árbol en disco (`AutomaticUpdatePolicy=stage`).
 * **RAM Optimization:** `rpm-ostreed.conf` forzado a `IdleExitTimeout=60` para evicción estricta de memoria, liberando recursos para cargas locales (LLMs y telemetría).
 
