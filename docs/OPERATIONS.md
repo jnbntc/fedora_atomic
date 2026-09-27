@@ -56,6 +56,7 @@ stable
 - `promote-stable.yml`: promoción automática `candidate → stable`.
 - `cleanup.yml`: retención GHCR.
 - `recovery-drill.yml`: prueba mensual de recuperabilidad de `stable`.
+- `fedora-atomic-verified-update.timer`: updater local de la workstation; 18:30 y 02:30, sin reboot automático.
 - `validate.yml`: validación unificada de PRs; adentro separa configuración, hardening/smoke, seguridad/release y recovery.
 
 ## Qué significa cada tipo de fallo
@@ -97,6 +98,8 @@ Acción: tratarlo como deriva de inputs upstream. No sobrescribir `sha-<commit>`
 Las attestations y firmas también viven asociadas al digest OCI/GitHub, independientemente del artifact ZIP de Actions.
 
 ## Operaciones manuales útiles
+
+El host normal no sigue el tag `stable` directamente. El updater local lo resuelve a digest, verifica supply chain con Cosign y solo entonces prepara el deployment.
 
 Verificar el canal estable desde un checkout confiable:
 
