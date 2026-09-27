@@ -99,9 +99,9 @@ Para cada digest publicado en `main` se generan y verifican:
 
 1. **Cosign keyless signature** — identidad esperada: `.github/workflows/build.yml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com`.
 2. **SLSA provenance v1** — generada con `actions/attest-build-provenance` y ligada al commit fuente.
-3. **SPDX 2.3 attestation** — el SBOM canónico de Syft se firma como predicate `https://spdx.dev/Document/v2.3`.
+3. **SPDX 2.3 attestation** — se deriva del SBOM canónico una vista package-level compacta (<16 MiB) que conserva los 7.830 paquetes y sus purls, pero omite el inventario masivo de archivos/relaciones `CONTAINS`. El SBOM completo permanece intacto como evidencia de 30 días.
 
-Las attestations se registran en GitHub y se publican además como OCI referrers en GHCR. El pipeline usa `gh attestation verify` y Cosign para comprobarlas antes de mover `candidate`/`latest`. La promoción a `stable` repite esas verificaciones sobre el digest descargado desde GHCR.
+Las attestations se registran en GitHub y se publican además como OCI referrers en GHCR. GitHub impone un límite de 16 MiB al archivo SBOM usado como predicate; por eso la vista compacta se valida explícitamente antes de firmarla. El pipeline usa `gh attestation verify` y Cosign para comprobarlas antes de mover `candidate`/`latest`. La promoción a `stable` repite esas verificaciones sobre el digest descargado desde GHCR.
 
 Ejemplo conceptual de verificación:
 
