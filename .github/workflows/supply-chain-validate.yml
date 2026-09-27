@@ -1,0 +1,61 @@
+name: Supply Chain Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build.yml
+      - .github/workflows/promote-stable.yml
+      - .github/workflows/supply-chain-validate.yml
+      - scripts/publish/**
+      - scripts/security/**
+      - scripts/tests/test-publish-identity.sh
+      - scripts/tests/test-publish-channels.sh
+      - scripts/tests/test-supply-chain-verification.sh
+      - scripts/cleanup-ghcr.sh
+      - scripts/tests/test-cleanup-ghcr.sh
+
+jobs:
+  validate-supply-chain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bash syntax
+        run: |
+          bash -n scripts/publish/publish-image.sh
+          bash -n scripts/publish/publish-channels.sh
+          bash -n scripts/security/verify-signed-image.sh
+          bash -n scripts/tests/test-publish-identity.sh
+          bash -n scripts/tests/test-publish-channels.sh
+          bash -n scripts/tests/test-supply-chain-verification.sh
+          bash -n scripts/cleanup-ghcr.sh
+          bash -n scripts/tests/test-cleanup-ghcr.sh
+
+      - name: ShellCheck
+        run: |
+          shellcheck scripts/publish/publish-image.sh
+          shellcheck scripts/publish/publish-channels.sh
+          shellcheck scripts/security/verify-signed-image.sh
+          shellcheck scripts/tests/test-publish-identity.sh
+          shellcheck scripts/tests/test-publish-channels.sh
+          shellcheck scripts/tests/test-supply-chain-verification.sh
+          shellcheck scripts/cleanup-ghcr.sh
+          shellcheck scripts/tests/test-cleanup-ghcr.sh
+
+      - name: Identity publication tests
+        run: bash scripts/tests/test-publish-identity.sh
+
+      - name: Mutable channel publication tests
+        run: bash scripts/tests/test-publish-channels.sh
+
+      - name: Supply-chain verification tests
+        run: bash scripts/tests/test-supply-chain-verification.sh
+
+      - name: Cleanup regression tests
+        run: bash scripts/tests/test-cleanup-ghcr.sh

@@ -75,10 +75,10 @@ dry_output="$(
   exit 1
 }
 
-grep -q 'version=92' <<<"$dry_output" || {
-  echo "FAIL: no seleccionó untagged id=92" >&2
+if grep -q 'version=92' <<<"$dry_output"; then
+  echo "FAIL: intentó borrar untagged del paquete principal id=92" >&2
   exit 1
-}
+fi
 
 grep -q 'version=93' <<<"$dry_output" || {
   echo "FAIL: no seleccionó build gestionado antiguo id=93" >&2
@@ -101,13 +101,16 @@ bash "$SCRIPT" \
   --keep-old-tagged 5 \
   --package fedora_atomic >/dev/null
 
-[[ "$(wc -l <"$DELETE_LOG")" -eq 2 ]] || {
-  echo "FAIL: imagen principal esperaba exactamente 2 DELETE" >&2
+[[ "$(wc -l <"$DELETE_LOG")" -eq 1 ]] || {
+  echo "FAIL: imagen principal esperaba exactamente 1 DELETE" >&2
   cat "$DELETE_LOG" >&2
   exit 1
 }
 
-grep -q '/versions/92' "$DELETE_LOG"
+if grep -q '/versions/92' "$DELETE_LOG"; then
+  echo "FAIL: apply borró untagged del paquete principal id=92" >&2
+  exit 1
+fi
 grep -q '/versions/93' "$DELETE_LOG"
 # ---------------------------------------------------------------------------
 # Política del cache: conserva recientes y al menos N versiones etiquetadas
