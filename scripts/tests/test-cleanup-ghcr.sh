@@ -39,25 +39,35 @@ export GH_TOKEN="test-token"
 export GH_FAKE_DELETE_LOG="$DELETE_LOG"
 
 # ---------------------------------------------------------------------------
-# Política de la imagen principal
+# Política de la imagen principal:
+# - latest siempre protegido
+# - solo tags gestionados pueden purgarse
+# - cualquier tag especial protege la versión
 # ---------------------------------------------------------------------------
 cat >"$FIXTURE" <<EOF
 [
-  {"id":100,"updated_at":"$old_6","metadata":{"container":{"tags":["latest"]}}},
-  {"id":99,"updated_at":"$recent_1","metadata":{"container":{"tags":["recent"]}}},
-  {"id":98,"updated_at":"$old_1","metadata":{"container":{"tags":["old-1"]}}},
-  {"id":97,"updated_at":"$old_2","metadata":{"container":{"tags":["old-2"]}}},
-  {"id":96,"updated_at":"$old_3","metadata":{"container":{"tags":["old-3"]}}},
-  {"id":95,"updated_at":"$old_4","metadata":{"container":{"tags":["old-4"]}}},
-  {"id":94,"updated_at":"$old_5","metadata":{"container":{"tags":["old-5"]}}},
-  {"id":93,"updated_at":"$old_6","metadata":{"container":{"tags":["old-6"]}}},
+  {"id":100,"updated_at":"$old_6","metadata":{"container":{"tags":["latest","sha-1111111111111111111111111111111111111111","20260901-111111111111","run-100-1"]}}},
+  {"id":99,"updated_at":"$recent_1","metadata":{"container":{"tags":["sha-2222222222222222222222222222222222222222","20260926-222222222222","run-99-1"]}}},
+  {"id":98,"updated_at":"$old_1","metadata":{"container":{"tags":["sha-3333333333333333333333333333333333333333","20260830-333333333333","run-98-1"]}}},
+  {"id":97,"updated_at":"$old_2","metadata":{"container":{"tags":["sha-4444444444444444444444444444444444444444","20260829-444444444444","run-97-1"]}}},
+  {"id":96,"updated_at":"$old_3","metadata":{"container":{"tags":["sha-5555555555555555555555555555555555555555","20260828-555555555555","run-96-1"]}}},
+  {"id":95,"updated_at":"$old_4","metadata":{"container":{"tags":["sha-6666666666666666666666666666666666666666","20260827-666666666666","run-95-1"]}}},
+  {"id":94,"updated_at":"$old_5","metadata":{"container":{"tags":["sha-7777777777777777777777777777777777777777","20260826-777777777777","run-94-1"]}}},
+  {"id":93,"updated_at":"$old_6","metadata":{"container":{"tags":["20260801"]}}},
+  {"id":91,"updated_at":"$old_6","metadata":{"container":{"tags":["stable","sha-8888888888888888888888888888888888888888"]}}},
+  {"id":90,"updated_at":"$old_6","metadata":{"container":{"tags":["candidate"]}}},
   {"id":92,"updated_at":"$old_6","metadata":{"container":{"tags":[]}}}
 ]
 EOF
 export GH_FAKE_FIXTURE="$FIXTURE"
 
 dry_output="$(
-  bash "$SCRIPT"     --dry-run     --owner test-user     --retention-days 14     --keep-old-tagged 5     --package fedora_atomic
+  bash "$SCRIPT" \
+    --dry-run \
+    --owner test-user \
+    --retention-days 14 \
+    --keep-old-tagged 5 \
+    --package fedora_atomic
 )"
 
 [[ ! -s "$DELETE_LOG" ]] || {
@@ -71,18 +81,25 @@ grep -q 'version=92' <<<"$dry_output" || {
 }
 
 grep -q 'version=93' <<<"$dry_output" || {
-  echo "FAIL: no seleccionó build antiguo id=93" >&2
+  echo "FAIL: no seleccionó build gestionado antiguo id=93" >&2
   exit 1
 }
 
-if grep -q 'version=100' <<<"$dry_output"; then
-  echo "FAIL: intentó borrar latest id=100" >&2
-  exit 1
-fi
+for protected in 100 91 90; do
+  if grep -q "version=$protected" <<<"$dry_output"; then
+    echo "FAIL: intentó borrar versión protegida id=$protected" >&2
+    exit 1
+  fi
+done
 
 : >"$DELETE_LOG"
 
-bash "$SCRIPT"   --apply   --owner test-user   --retention-days 14   --keep-old-tagged 5   --package fedora_atomic >/dev/null
+bash "$SCRIPT" \
+  --apply \
+  --owner test-user \
+  --retention-days 14 \
+  --keep-old-tagged 5 \
+  --package fedora_atomic >/dev/null
 
 [[ "$(wc -l <"$DELETE_LOG")" -eq 2 ]] || {
   echo "FAIL: imagen principal esperaba exactamente 2 DELETE" >&2
@@ -92,7 +109,6 @@ bash "$SCRIPT"   --apply   --owner test-user   --retention-days 14   --keep-old-
 
 grep -q '/versions/92' "$DELETE_LOG"
 grep -q '/versions/93' "$DELETE_LOG"
-
 # ---------------------------------------------------------------------------
 # Política del cache: conserva recientes y al menos N versiones etiquetadas
 # ---------------------------------------------------------------------------

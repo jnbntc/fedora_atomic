@@ -173,10 +173,10 @@ grep -Fq 'sbom:security-evidence/sbom.spdx.json' "$workflow" || {
 }
 
 gate_line="$(grep -n 'Enforce Fedora Security Gate' "$workflow" | cut -d: -f1)"
-push_line="$(grep -n 'Push Built Image' "$workflow" | cut -d: -f1)"
+push_line="$(grep -n 'Publish Immutable Image Identity' "$workflow" | cut -d: -f1)"
 
 [[ -n "$gate_line" && -n "$push_line" && "$gate_line" -lt "$push_line" ]] || {
-  echo "FAIL: el security gate debe ejecutarse antes del push" >&2
+  echo "FAIL: el security gate debe ejecutarse antes de la publicación" >&2
   exit 1
 }
 

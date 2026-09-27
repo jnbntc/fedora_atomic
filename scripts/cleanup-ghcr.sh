@@ -138,15 +138,24 @@ clean_main_tagged() {
   local -a rows=()
 
   cutoff="$(date -u -d "${RETENTION_DAYS} days ago" +'%Y-%m-%dT%H:%M:%SZ')"
-  log "Política imagen: cutoff=${cutoff}; conservar ${KEEP_OLD_TAGGED} builds antiguos además de los recientes."
+  log "Política imagen: cutoff=${cutoff}; conservar ${KEEP_OLD_TAGGED} builds antiguos; solo se purgan tags gestionados. Tags especiales quedan protegidos."
 
   mapfile -t rows < <(
-    jq -r       --arg cutoff "$cutoff"       --argjson keep "$KEEP_OLD_TAGGED" '
+    jq -r \
+      --arg cutoff "$cutoff" \
+      --argjson keep "$KEEP_OLD_TAGGED" '
+        def managed_tag:
+          test("^[0-9]{8}$")
+          or test("^[0-9]{8}-[0-9a-f]{12}$")
+          or test("^sha-[0-9a-f]{40}$")
+          or test("^run-[0-9]+-[0-9]+$");
+
         [
           .[]
           | select(
               (.metadata.container.tags | length) > 0
               and (.metadata.container.tags | index("latest") | not)
+              and all(.metadata.container.tags[]; managed_tag)
               and .updated_at < $cutoff
             )
         ]
