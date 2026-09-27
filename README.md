@@ -29,7 +29,7 @@ El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como má
 * **Fedora Security Gate:** `dnf5 advisory` consulta la metadata nativa de Fedora contra el rpmdb exacto de la imagen recién construida. La política versionada en `security/vulnerability-policy.json` bloquea advisories `Critical` e `Important` disponibles; `Moderate` y `Low` son informativos.
 * **Grype advisory:** Grype `v0.119.0` analiza el SBOM como capa complementaria para dependencias embebidas (Go, Python, CPE, etc.). No se usa como autoridad para CVE del SO porque los probes de Etapa 5 comprobaron que no asociaba los RPM OSTree con namespaces Fedora.
 * **Evidencia:** cada build conserva por 30 días el resultado de smoke tests, los dos SBOM, el reporte Grype y el JSON de advisories Fedora como artifact de GitHub Actions.
-* **Registro:** tras completar el build, la imagen se publica en **GHCR** bajo las etiquetas `latest` y `YYYYMMDD`. La firma criptográfica del artefacto todavía no está implementada y se incorporará en una etapa posterior.
+* **Registro e identidad:** `latest` es el único alias deliberadamente mutable. Cada publicación crea `sha-<commit40>`, `YYYYMMDD-<sha12>` y `run-<run_id>-<attempt>`, todos asociados al mismo digest OCI. Si un tag inmutable existente apunta a otro digest, la publicación se bloquea antes de mover `latest`. La firma criptográfica todavía se incorporará en una etapa posterior.
 
 ### 2. Política de seguridad del artefacto
 
@@ -47,23 +47,45 @@ podman build
     └── dnf5 advisory sobre la imagen
           └── Fedora Critical/Important disponibles?
                   ├── sí → build FAIL / no push
-                  └── no → push latest + YYYYMMDD
+                  └── no → identidad OCI inmutable
+                              ├── sha-<commit40>
+                              ├── YYYYMMDD-<sha12>
+                              ├── run-<id>-<attempt>
+                              └── latest (mutable, último paso)
 ```
 
 La fuente autoritativa para el gate del sistema operativo es la metadata de advisories de Fedora, consultada con `dnf5 --refresh advisory list --available --security --with-cve --json`. Esto evita interpretar como “0 CVE” un scanner genérico que reconoce Fedora pero no tiene cobertura de matching para los RPM del OSTree.
 
 La política está separada del workflow en `security/vulnerability-policy.json` y su lógica se prueba con `scripts/tests/test-security-gate.sh`. Los cambios en `security/**` o `scripts/security/**` disparan un build de `main`, por lo que cambiar la política también vuelve a validar el artefacto.
 
-### 3. Mantenimiento de GHCR
+### 3. Identidad e inmutabilidad OCI
+
+La publicación usa `scripts/publish/publish-image.sh` y trata el digest OCI como identidad primaria. El orden es deliberado:
+
+```text
+run-<run_id>-<attempt>  ── push inicial ──► digest sha256:...
+                                      │
+                                      ├── sha-<commit40>
+                                      ├── YYYYMMDD-<sha12>
+                                      └── latest  ← se mueve al final
+```
+
+Los tres primeros tags son gestionados como **inmutables por política**. Antes de crear `sha-...` o el tag fecha+commit, el pipeline consulta GHCR con Skopeo. Si el tag ya existe con el mismo digest se reutiliza; si apunta a otro digest, el workflow falla y `latest` queda intacto. Esto también detecta el caso importante de un mismo commit que intenta producir un artefacto diferente en una ejecución posterior.
+
+Cada publicación exitosa genera `security-evidence/image-identity.json` con repositorio, digest, commit, run ID, attempt y tags. Ese archivo se conserva como artifact durante 90 días.
+
+El cleanup de GHCR solo puede purgar tags de identidad gestionados (incluyendo el formato diario legado). Si una versión lleva un tag desconocido como `stable`, `candidate` o una futura versión semántica, queda protegida por defecto.
+
+### 4. Mantenimiento de GHCR
 La retención del registro está desacoplada del build y se gestiona mediante `.github/workflows/cleanup.yml` y `scripts/cleanup-ghcr.sh`.
 
 * **Schedule:** domingo 04:37 UTC / 01:37 ART.
 * **Manual:** `workflow_dispatch`, con `dry-run` como opción predeterminada.
 * **Seguridad:** el script usa `set -Eeuo pipefail`, diferencia un `404` de otros errores de API y no oculta fallos de autenticación o del backend.
-* **Retención:** elimina versiones `untagged`; para `fedora_atomic` conserva `latest`, todos los builds etiquetados de los últimos 14 días y además los 5 builds antiguos más recientes. Para `fedora_atomic/cache`, conserva todas las versiones etiquetadas de los últimos 14 días y garantiza un piso de 100 versiones etiquetadas recientes; las versiones de cache más antiguas que ambos límites se purgan.
+* **Retención:** elimina versiones `untagged`; para `fedora_atomic` solo considera purgables versiones cuyos tags sean exclusivamente formatos gestionados (`YYYYMMDD` legado, `YYYYMMDD-SHA12`, `sha-SHA40`, `run-ID-ATTEMPT`). `latest` y cualquier tag especial/desconocido quedan protegidos. Conserva los últimos 14 días y además los 5 builds antiguos más recientes. Para `fedora_atomic/cache`, conserva todas las versiones etiquetadas de los últimos 14 días y garantiza un piso de 100 versiones etiquetadas recientes; las versiones de cache más antiguas que ambos límites se purgan.
 * **Validación:** cada PR que modifica esta lógica ejecuta `bash -n`, ShellCheck y pruebas unitarias con un `gh` simulado, sin tocar GHCR.
 
-### 4. Configuración declarativa del rootfs
+### 5. Configuración declarativa del rootfs
 La configuración propia del sistema ya no se genera mediante `echo` dentro del `Containerfile`. Se versiona directamente bajo `files/etc/` y se incorpora a la imagen mediante `COPY`.
 
 Actualmente el árbol incluye:
@@ -86,7 +108,7 @@ Los symlinks de servicios habilitados permanecen por ahora explícitos en el `Co
 
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 
-### 5. Nivel CD: Local Staging
+### 6. Nivel CD: Local Staging
 El host local (notebook) opera como un nodo pasivo de consumo.
 * **Staging Asíncrono:** a través de un *drop-in* de Systemd (`rpm-ostreed-automatic.timer`), el host descarga los deltas diariamente a la 01:00 AM (o al encenderse vía `Persistent=true`) y pre-ensambla el árbol en disco (`AutomaticUpdatePolicy=stage`).
 * **RAM Optimization:** `rpm-ostreed.conf` forzado a `IdleExitTimeout=60` para evicción estricta de memoria, liberando recursos para cargas locales (LLMs y telemetría).
