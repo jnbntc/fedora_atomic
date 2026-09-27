@@ -85,7 +85,8 @@ info() {
 }
 
 inside_image() {
-  # shellcheck disable=SC1091 -- existe dentro del rootfs de la imagen, no en el checkout
+  # Existe dentro del rootfs de la imagen, no en el checkout del runner.
+  # shellcheck disable=SC1091
   source /usr/lib/os-release
 
   [[ "${ID:-}" == "$EXPECTED_FEDORA_ID" ]]     || fail "ID=${ID:-<vacío>} (esperado: $EXPECTED_FEDORA_ID)"
