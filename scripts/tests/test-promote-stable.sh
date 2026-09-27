@@ -203,12 +203,12 @@ grep -Fq "github.ref == 'refs/heads/main' && 'release'" "$build_workflow" || {
   exit 1
 }
 
-grep -Fq 'ref: ${{ github.event.workflow_run.head_sha }}' "$workflow" || {
+grep -Fq "ref: \${{ github.event.workflow_run.head_sha }}" "$workflow" || {
   echo "FAIL: promoción no checkout-ea la revision exacta" >&2
   exit 1
 }
 
-grep -Fq 'IMAGE_REF="${IMAGE_NAME}:sha-${REVISION}"' "$workflow" || {
+grep -Fq "IMAGE_REF=\"\${IMAGE_NAME}:sha-\${REVISION}\"" "$workflow" || {
   echo "FAIL: promoción no valida la identidad inmutable sha-<commit>" >&2
   exit 1
 }
