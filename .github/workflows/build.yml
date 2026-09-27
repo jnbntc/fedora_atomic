@@ -10,6 +10,7 @@ on:
       - files/**
       - security/**
       - scripts/security/**
+      - scripts/smoke/**
   schedule:
     - cron: '17 22 * * *' # 22:17 UTC / 19:17 ART
   workflow_dispatch:
@@ -93,6 +94,16 @@ jobs:
 
           test -f rootfs/usr/lib/os-release
           test -f rootfs/usr/share/rpm/rpmdb.sqlite
+
+      - name: Artifact Smoke Tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash scripts/smoke/test-image.sh \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            rootfs \
+            files/etc \
+            2>&1 | tee security-evidence/artifact-smoke.txt
 
       - name: Download pinned Syft
         id: syft
@@ -219,6 +230,7 @@ jobs:
             security-evidence/grype-summary.json
             security-evidence/fedora-security-advisories.json
             security-evidence/fedora-security-gate.txt
+            security-evidence/artifact-smoke.txt
           retention-days: 30
           if-no-files-found: warn
           compression-level: 6
