@@ -108,3 +108,11 @@ grep -Fq '      - scripts/smoke/**' "$workflow" || {
 }
 
 echo "OK: contrato de smoke tests sincronizado con Containerfile y pipeline."
+
+
+if [[ -e ".github/workflows/stage6-probe.yml" ]]; then
+  echo "FAIL: quedó el workflow temporal stage6-probe.yml" >&2
+  exit 1
+fi
+
+echo "OK: no queda workflow temporal de Etapa 6."
