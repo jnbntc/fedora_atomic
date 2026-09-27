@@ -56,7 +56,7 @@ stable
 - `promote-stable.yml`: promoción automática `candidate → stable`.
 - `cleanup.yml`: retención GHCR.
 - `recovery-drill.yml`: prueba mensual de recuperabilidad de `stable`.
-- workflows `*-validate.yml`: contratos estáticos/unitarios para PRs.
+- `validate.yml`: validación unificada de PRs; adentro separa configuración, hardening/smoke, seguridad/release y recovery.
 
 ## Qué significa cada tipo de fallo
 
