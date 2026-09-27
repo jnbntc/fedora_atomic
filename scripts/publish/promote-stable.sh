@@ -157,8 +157,8 @@ if [[ "$candidate_digest" != "$revision_digest" ]]; then
     echo "### Stable promotion"
     echo
     echo "- Estado: **stale candidate — sin promoción**"
-    echo "- Build: `${revision_digest}`"
-    echo "- Candidate actual: `${candidate_digest}`"
+    echo "- Build: \`${revision_digest}\`"
+    echo "- Candidate actual: \`${candidate_digest}\`"
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
   exit 0
 fi
@@ -170,7 +170,7 @@ if [[ "$stable_before" == "$revision_digest" ]]; then
     echo "### Stable promotion"
     echo
     echo "- Estado: **already stable**"
-    echo "- Digest: `${revision_digest}`"
+    echo "- Digest: \`${revision_digest}\`"
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
   exit 0
 fi
@@ -191,6 +191,6 @@ log "Stable promovido: ${REPOSITORY}:stable -> ${stable_after}"
   echo "### Stable promotion"
   echo
   echo "- Estado: **promoted**"
-  echo "- Digest: `${stable_after}`"
-  echo "- Revision: `${REVISION}`"
+  echo "- Digest: \`${stable_after}\`"
+  echo "- Revision: \`${REVISION}\`"
 } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
