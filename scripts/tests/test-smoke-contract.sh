@@ -79,6 +79,16 @@ grep -Fq "podman run --rm -i \"\$image_ref\" bash -s -- --inside" scripts/smoke/
   exit 1
 }
 
+grep -Fq 'timer_link="/etc/systemd/system/timers.target.wants/fedora-atomic-verified-update.timer"' scripts/smoke/test-image.sh || {
+  echo "FAIL: smoke test no valida el symlink creado por systemctl enable" >&2
+  exit 1
+}
+
+grep -Fq 'systemctl enable fedora-atomic-verified-update.timer' Containerfile || {
+  echo "FAIL: Containerfile no habilita el timer mediante systemctl enable" >&2
+  exit 1
+}
+
 grep -Fq 'bash scripts/smoke/test-image.sh' "$workflow" || {
   echo "FAIL: build.yml no ejecuta artifact smoke tests" >&2
   exit 1
