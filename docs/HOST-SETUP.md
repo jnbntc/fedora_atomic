@@ -29,12 +29,12 @@ No hay reboot automático.
 
 ## Timer verificado
 
-La imagen instala y habilita:
+La imagen instala el updater y su service, y habilita específicamente el timer:
 
 ```text
-fedora-atomic-verified-update.timer
-fedora-atomic-verified-update.service
 /usr/libexec/fedora-atomic-verified-update
+fedora-atomic-verified-update.service   # static / Type=oneshot
+fedora-atomic-verified-update.timer     # enabled
 ```
 
 Horario local:
