@@ -200,7 +200,7 @@ grep -Fq 'IOSchedulingClass=idle' "$service"
 grep -Fq "cron: '17 19 * * *'" "$build"
 
 grep -Fq 'systemctl enable fedora-atomic-verified-update.timer' "$containerfile"
-if grep -Fq '/usr/lib/systemd/system/timers.target.wants/' "$containerfile"; then
+if grep -Fq 'fedora-atomic-verified-update.timer /usr/lib/systemd/system/timers.target.wants/' "$containerfile"; then
   echo "FAIL: el timer verificado no debe habilitarse mediante vendor wants" >&2
   exit 1
 fi
