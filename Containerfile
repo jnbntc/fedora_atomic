@@ -89,7 +89,7 @@ RUN ln -sf /usr/lib/systemd/system/podman-auto-update.timer /usr/lib/systemd/sys
     ln -sf /usr/lib/systemd/system/tailscaled.service /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/thermald.service /usr/lib/systemd/system/multi-user.target.wants/ && \
     ln -sf /usr/lib/systemd/system/libvirtd.service /usr/lib/systemd/system/multi-user.target.wants/ && \
-    ln -sf /usr/lib/systemd/system/fedora-atomic-verified-update.timer /usr/lib/systemd/system/timers.target.wants/
+    systemctl enable fedora-atomic-verified-update.timer
 
 # 7. Sello del commit inmutable
 RUN ostree container commit
