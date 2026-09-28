@@ -76,11 +76,15 @@ El nuevo flujo no usa `AutomaticUpdatePolicy=stage` como mecanismo de scheduling
 ## Comprobar el estado
 
 ```bash
+systemctl is-enabled fedora-atomic-verified-update.timer
+systemctl is-active fedora-atomic-verified-update.timer
 systemctl status fedora-atomic-verified-update.timer --no-pager
 systemctl list-timers fedora-atomic-verified-update.timer --all
 journalctl -u fedora-atomic-verified-update.service --no-pager
 rpm-ostree status -v
 ```
+
+El timer debe reportar `enabled` y `active`. El servicio es `Type=oneshot`, por lo que fuera de una ejecución normal permanece `inactive (dead)`.
 
 Una ejecución normal sin novedades termina indicando que el digest booted ya coincide con `stable`.
 
