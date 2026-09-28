@@ -188,6 +188,7 @@ fi
 timer="${ROOT_DIR}/files/usr/lib/systemd/system/fedora-atomic-verified-update.timer"
 service="${ROOT_DIR}/files/usr/lib/systemd/system/fedora-atomic-verified-update.service"
 build="${ROOT_DIR}/.github/workflows/build.yml"
+containerfile="${ROOT_DIR}/Containerfile"
 
 grep -Fq 'OnCalendar=*-*-* 02:30:00' "$timer"
 grep -Fq 'OnCalendar=*-*-* 18:30:00' "$timer"
@@ -197,6 +198,12 @@ grep -Fq 'ExecStart=/usr/libexec/fedora-atomic-verified-update' "$service"
 grep -Fq 'Nice=10' "$service"
 grep -Fq 'IOSchedulingClass=idle' "$service"
 grep -Fq "cron: '17 19 * * *'" "$build"
+
+grep -Fq 'systemctl enable fedora-atomic-verified-update.timer' "$containerfile"
+if grep -Fq 'fedora-atomic-verified-update.timer /usr/lib/systemd/system/timers.target.wants/' "$containerfile"; then
+  echo "FAIL: el timer verificado no debe habilitarse mediante vendor wants" >&2
+  exit 1
+fi
 
 grep -Fq 'COSIGN_VERSION=3.1.3' "${ROOT_DIR}/Containerfile"
 grep -Fq 'COSIGN_SHA256=4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71' "${ROOT_DIR}/Containerfile"
