@@ -161,7 +161,7 @@ inside_image() {
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.service || fail "service del updater ausente"
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.timer || fail "timer del updater ausente"
 
-  timer_link="/usr/lib/systemd/system/timers.target.wants/fedora-atomic-verified-update.timer"
+  timer_link="/etc/systemd/system/timers.target.wants/fedora-atomic-verified-update.timer"
   [[ -L "$timer_link" ]] || fail "timer verificado no habilitado"
   [[ "$(readlink "$timer_link")" == "/usr/lib/systemd/system/fedora-atomic-verified-update.timer" ]] \
     || fail "symlink inesperado del timer verificado: $(readlink "$timer_link")"
