@@ -1,16 +1,60 @@
-# 📦 Fedora Atomic - OCI Native Desktop
+# 📦 Fedora Atomic — OCI-native workstation lab
 
-[![Build Custom Fedora Atomic](https://github.com/jnbntc/fedora_atomic/actions/workflows/build.yml/badge.svg)](https://github.com/jnbntc/fedora_atomic/actions/workflows/build.yml)
+[![Build & Security Gate](https://github.com/jnbntc/fedora_atomic/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/build.yml)
+[![Promote Stable](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml)
+[![Repository Validation](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml)
+[![Recovery Drill](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml)
 [![Base](https://img.shields.io/badge/Base-Fedora_Silverblue_44-blue.svg)](https://fedoraproject.org/silverblue/)
-[![Paradigm](https://img.shields.io/badge/Architecture-OCI_Native-green.svg)](#)
 
-Repositorio de Infraestructura como Código (IaC) para el aprovisionamiento y mantenimiento de una estación de trabajo basada en **Fedora Silverblue 44**.
+Workstation personal basada en **Fedora Silverblue 44**, construida como imagen OCI y usada también como laboratorio de infraestructura inmutable, CI/CD y supply-chain security.
 
-La arquitectura implementa un modelo estricto de **Desacople CI/CD**, desplazando la carga de cálculo y resolución de dependencias hacia GitHub Actions, entregando un artefacto OCI final al *endpoint* local para su *staging* asíncrono.
+El objetivo original era simple: dejar de depender de cambios manuales difíciles de recordar y poder reconstruir el sistema desde código. Con el tiempo el flujo incorporó smoke tests sobre el artefacto real, SBOMs, un security gate basado en metadata nativa de Fedora, identidades OCI inmutables, firma keyless con Cosign, provenance SLSA, promoción `candidate → stable`, actualización local verificada por digest y ejercicios periódicos de recovery.
 
-> **Estado de seguridad del pipeline:** el pipeline genera SBOMs SPDX y CycloneDX desde el rootfs real, aplica un gate Fedora-native y publica primero una identidad OCI inmutable. Ese digest se firma de forma **keyless** con Sigstore/Cosign usando GitHub OIDC, recibe provenance SLSA y una attestation SPDX 2.3, y solo después de verificar las tres evidencias se mueven `candidate` y `latest`. Advisories Fedora **Critical** o **Important** con actualización disponible bloquean la publicación.
+> **Alcance:** este repositorio describe mi workstation y mi hardware. No pretende ser una distribución genérica ni una receta para aplicar a ciegas en otros equipos.
 
----
+## ⚡ El flujo en 20 segundos
+
+```text
+main
+  ↓
+build OCI
+  ↓
+smoke tests + SBOM + Fedora security gate
+  ↓
+identidad inmutable + Cosign + SLSA + attestation
+  ↓
+candidate
+  ↓
+segunda validación del artefacto publicado
+  ↓
+stable
+  ↓
+updater local verifica supply chain
+  ↓
+rpm-ostree rebase @sha256
+  ↓
+staged → reboot manual
+```
+
+La idea central es que cada etapa produzca **evidencia verificable** y que un fallo deje el sistema en el último estado conocido como bueno. El host no confía directamente en el tag `stable`: primero lo resuelve a un digest, verifica firma, provenance y SBOM, y recién entonces prepara el deployment.
+
+## 🗺️ Mapa rápido del repositorio
+
+| Ruta | Para qué sirve |
+| --- | --- |
+| `Containerfile` | definición de la imagen Fedora Atomic |
+| `.github/workflows/build.yml` | build, smoke, SBOM, security gate, firma y publicación |
+| `.github/workflows/promote-stable.yml` | segunda validación y promoción a `stable` |
+| `files/` | configuración declarativa incorporada al rootfs |
+| `files/usr/libexec/fedora-atomic-verified-update` | updater local fail-closed |
+| `scripts/smoke/` | validación funcional del artefacto |
+| `scripts/security/` | gate Fedora y verificación de supply chain |
+| `scripts/recovery/` | helpers de verificación y recuperación |
+| `docs/OPERATIONS.md` | operación diaria y lectura de fallos |
+| `docs/HOST-SETUP.md` | integración del host y timer local |
+| `docs/DISASTER-RECOVERY.md` | rollback y recuperación |
+
+Para entender el proyecto sin leer todo el historial, conviene empezar por este README y después seguir con **[OPERATIONS](docs/OPERATIONS.md)** y **[DISASTER RECOVERY](docs/DISASTER-RECOVERY.md)**.
 
 ## 🏗️ Arquitectura de Despliegue
 
@@ -169,7 +213,7 @@ files/etc/
 
 `vscode.repo` se copia antes de la transacción `rpm-ostree` porque es necesario para instalar VS Code; el árbol completo `files/etc/` se copia después de instalar paquetes para que cambios de configuración no invaliden innecesariamente la capa pesada de paquetes.
 
-Los symlinks de servicios habilitados permanecen por ahora explícitos en el `Containerfile`: son estado de activación de systemd, no archivos regulares, y se migrarán solo si podemos conservar exactamente su semántica.
+Los servicios base (`podman-auto-update.timer`, `tailscaled`, `thermald` y `libvirtd`) mantienen symlinks explícitos en el `Containerfile`. El updater verificado, en cambio, se habilita con `systemctl enable fedora-atomic-verified-update.timer`, por lo que su enlace queda bajo `/etc/systemd/system/timers.target.wants/`. Los smoke tests verifican explícitamente ese contrato.
 
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 
@@ -195,9 +239,13 @@ Paquetes y servicios inyectados nativamente en la compilación remota. El host n
 * **Purgas:** se extrae `firefox` y sus langpacks base para reducir superficie de ataque.
 
 ### Layering Dinámico (LocalPackages)
-Paquetes excluidos intencionalmente de la imagen OCI debido a la ejecución de scripts `%post` agresivos que rompen el *sandbox* del compilador. Se superponen localmente sobre el host conectándolos a sus repositorios oficiales para su auto-actualización:
-* `microsoft-edge-stable`
+Algunos paquetes pueden quedar deliberadamente fuera de la imagen OCI cuando su instalación requiere comportamiento host-local difícil de reproducir de forma segura durante el build. Esos paquetes se gestionan por separado y no forman parte de la garantía de reconstrucción del rootfs.
+
+En el host principal, el caso actual es:
+
 * `teamviewer`
+
+El estado local se captura antes de cambios importantes con `scripts/recovery/capture-host-state.sh` para que estos componentes no queden implícitos.
 
 ---
 
