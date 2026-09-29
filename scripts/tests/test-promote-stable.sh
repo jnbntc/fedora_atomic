@@ -155,7 +155,7 @@ if grep -Fq 'skopeo copy' "$CALL_LOG"; then
 fi
 
 # 5. Error de inspección de candidate: fail closed.
-seed 200 "$DIGEST" "$DIGEST" "$REVISION"
+seed 204 "$DIGEST" "$DIGEST" "$REVISION"
 : >"$CALL_LOG"
 export FAKE_FATAL_TAG="candidate"
 
