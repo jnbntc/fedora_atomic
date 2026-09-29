@@ -50,12 +50,14 @@ export PATH="${BIN}:${PATH}"
 export FAKE_LOG="$LOG"
 export FAKE_MAP="$MAP"
 
-printf 'sha-%s|%s\n' "$REV" "$DIGEST" >"$MAP"
+printf 'run-100-1|%s\n' "$DIGEST" >"$MAP"
 
 bash "$SCRIPT" \
   --repository "$REPO" \
   --revision "$REV" \
   --digest "$DIGEST" \
+  --run-id 100 \
+  --run-attempt 1 \
   --evidence-file "${TMP_DIR}/channels.json" >/dev/null
 
 grep -Fq 'skopeo copy' "$LOG"
@@ -63,11 +65,16 @@ grep -Fq ":candidate" "$LOG"
 grep -Fq ":latest" "$LOG"
 jq -e --arg d "$DIGEST" '.channels.candidate == $d and .channels.latest == $d' "${TMP_DIR}/channels.json" >/dev/null
 
-printf 'sha-%s|%s\n' "$REV" "$OTHER" >"$MAP"
+printf 'run-100-1|%s\n' "$OTHER" >"$MAP"
 : >"$LOG"
 
-if bash "$SCRIPT" --repository "$REPO" --revision "$REV" --digest "$DIGEST" >/dev/null 2>&1; then
-  echo "FAIL: aceptó revision tag con digest distinto" >&2
+if bash "$SCRIPT" \
+  --repository "$REPO" \
+  --revision "$REV" \
+  --digest "$DIGEST" \
+  --run-id 100 \
+  --run-attempt 1 >/dev/null 2>&1; then
+  echo "FAIL: aceptó run tag con digest distinto" >&2
   exit 1
 fi
 
@@ -76,4 +83,10 @@ if grep -Fq 'skopeo copy' "$LOG"; then
   exit 1
 fi
 
-echo "OK: publicación de candidate/latest por digest validada."
+jq -e '
+  .source_tag == "run-100-1"
+  and .github_run.id == "100"
+  and .github_run.attempt == "1"
+' "${TMP_DIR}/channels.json" >/dev/null
+
+echo "OK: publicación de candidate/latest desde identidad exacta de run validada."
