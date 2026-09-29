@@ -6,9 +6,9 @@ Este documento describe cómo operar el pipeline y cómo interpretar su estado s
 
 | Canal | Semántica | Uso recomendado |
 | --- | --- | --- |
-| `sha-<commit40>` | identidad inmutable por commit | auditoría y recuperación exacta |
-| `YYYYMMDD-<sha12>` | identidad legible e inmutable | navegación humana |
-| `run-<run_id>-<attempt>` | identidad forense de ejecución | correlación con GitHub Actions |
+| `run-<run_id>-<attempt>` | identidad inmutable de una ejecución concreta | auditoría, promoción y correlación con GitHub Actions |
+| `sha-<commit40>` | formato legacy | builds históricos; ya no participa del release |
+| `YYYYMMDD-<sha12>` | formato legacy | builds históricos; ya no participa del release |
 | `candidate` | último build de `main` firmado y attestated | pruebas anticipadas |
 | `latest` | alias del último build validado | inspección / compatibilidad |
 | `stable` | candidate revalidado desde GHCR | **canal normal del host** |
@@ -79,11 +79,11 @@ Acción: revisar `fedora-atomic-supply-chain-...`. No forzar tags manualmente.
 
 Acción: revisar los artifacts `fedora-atomic-promotion-validation-...` y `fedora-atomic-stable-promotion-...`.
 
-### Conflicto de inmutabilidad
+### Rebuild del mismo commit con digest diferente
 
-El mismo commit intentó producir un digest diferente.
+Es un resultado posible y esperado porque el build no es hermético: la base Fedora y los repositorios upstream pueden cambiar aunque el commit fuente sea el mismo.
 
-Acción: tratarlo como deriva de inputs upstream. No sobrescribir `sha-<commit>`; inspeccionar base Fedora, repos externos y cambios de paquetes antes de decidir qué hacer.
+Cada ejecución recibe su propia identidad inmutable `run-<run_id>-<attempt>`. El nuevo artefacto debe pasar nuevamente smoke tests, security gate, firma, attestations y promoción antes de llegar a `stable`.
 
 ## Evidencia y retención
 
@@ -125,7 +125,7 @@ Forzar un build manual debe hacerse desde **Actions → Fedora Atomic Core - Bui
 ## Qué no hacer
 
 - No mover manualmente `stable` para “arreglar” un workflow rojo.
-- No reutilizar un tag `sha-<commit>` con otro digest.
+- No reutilizar un tag `run-<run_id>-<attempt>`; identifica una única ejecución y un único digest.
 - No borrar a mano versiones `untagged` del paquete principal: pueden ser referrers de firma/attestation.
 - No hacer rebase a `candidate` en el host principal salvo que sea una prueba deliberada.
 - No considerar el repo como backup de `$HOME`, secretos o datos de usuario.
