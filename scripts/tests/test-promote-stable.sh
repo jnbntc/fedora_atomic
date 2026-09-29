@@ -213,8 +213,8 @@ grep -Fq "ref: \${{ github.event.workflow_run.head_sha }}" "$workflow" || {
   exit 1
 }
 
-grep -Fq "IMAGE_REF=\"\${IMAGE_NAME}:sha-\${REVISION}\"" "$workflow" || {
-  echo "FAIL: promoción no valida la identidad inmutable sha-<commit>" >&2
+grep -Fq 'IMAGE_REF="${IMAGE_NAME}:run-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"' "$workflow" || {
+  echo "FAIL: promoción no usa la identidad inmutable del workflow run exacto" >&2
   exit 1
 }
 
