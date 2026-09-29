@@ -26,11 +26,11 @@ Uso:
     --run-attempt N \
     [--identity-file PATH]
 
-Tags:
-  sha-<git sha40>
-  <YYYYMMDD>-<sha12>
-  run-<run_id>-<attempt>
-  candidate
+Identidad OCI:
+  run-<run_id>-<attempt>   tag inmutable por ejecución
+  sha256:...               identidad primaria del artefacto
+
+Canales mutables:
   candidate
   latest
 
@@ -81,28 +81,6 @@ push_tag_and_verify() {
 
   [[ "$pushed_digest" == "$expected_digest" ]] \
     || die "Digest inesperado al publicar ${tag}: ${pushed_digest} != ${expected_digest}"
-}
-
-ensure_immutable_alias() {
-  local tag="$1"
-  local candidate_digest="$2"
-  local existing rc
-
-  if existing="$(remote_digest "$tag")"; then
-    if [[ "$existing" != "$candidate_digest" ]]; then
-      die "CONFLICTO DE INMUTABILIDAD: ${tag} ya apunta a ${existing}, candidato=${candidate_digest}"
-    fi
-
-    log "Tag inmutable ya existe con el mismo digest: ${tag} -> ${existing}"
-    return 0
-  else
-    rc=$?
-  fi
-
-  [[ "$rc" -eq 1 ]] || die "No se pudo determinar si ${tag} existe (rc=${rc})"
-
-  log "Creando tag inmutable: ${tag}"
-  push_tag_and_verify "$tag" "$candidate_digest"
 }
 
 publish_run_identity() {
@@ -163,15 +141,10 @@ image_revision="$(podman image inspect --format '{{ index .Labels "org.openconta
   || die "Label OCI revision=${image_revision:-<vacío>} no coincide con ${REVISION}"
 
 short_sha="${REVISION:0:12}"
-revision_tag="sha-${REVISION}"
-date_tag="${BUILD_DATE}-${short_sha}"
 run_tag="run-${RUN_ID}-${RUN_ATTEMPT}"
 
-log "Publicando identidad única de ejecución: ${run_tag}"
+log "Publicando identidad inmutable de ejecución: ${run_tag}"
 candidate_digest="$(publish_run_identity "$run_tag")"
-
-ensure_immutable_alias "$revision_tag" "$candidate_digest"
-ensure_immutable_alias "$date_tag" "$candidate_digest"
 
 if (( DEFER_CHANNELS )); then
   log "Canales mutables diferidos: candidate/latest se moverán después de firma y attestations."
@@ -195,8 +168,6 @@ jq -n \
   --arg run_id "$RUN_ID" \
   --arg run_attempt "$RUN_ATTEMPT" \
   --arg generated_at "$generated_at" \
-  --arg revision_tag "$revision_tag" \
-  --arg date_tag "$date_tag" \
   --arg run_tag "$run_tag" \
   --arg defer_channels "$DEFER_CHANNELS" \
   '{
@@ -209,14 +180,14 @@ jq -n \
     github_run: {id: $run_id, attempt: $run_attempt},
     generated_at: $generated_at,
     tags: {
-      immutable: [$revision_tag, $date_tag, $run_tag],
+      immutable: [$run_tag],
       mutable: ["candidate", "latest"]
     },
     channels_deferred: ($defer_channels == "1")
   }' >"$IDENTITY_FILE"
 
 log "Identidad publicada: ${REPOSITORY}@${candidate_digest}"
-log "Tags inmutables: ${revision_tag}, ${date_tag}, ${run_tag}"
+log "Tag inmutable de ejecución: ${run_tag}"
 if (( DEFER_CHANNELS )); then
   log "Aliases mutables diferidos: candidate, latest"
 else

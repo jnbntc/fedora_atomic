@@ -83,13 +83,18 @@ run_promote() {
 }
 
 seed() {
+  local run_id="$1"
+  local build_digest="$2"
+  local candidate_digest="$3"
+  local revision="$4"
+
   : >"$REMOTE_MAP"
-  printf 'sha-%s|%s|%s\n' "$REVISION" "$1" "$3" >>"$REMOTE_MAP"
-  printf 'candidate|%s|%s\n' "$2" "$3" >>"$REMOTE_MAP"
+  printf 'run-%s-1|%s|%s\n' "$run_id" "$build_digest" "$revision" >>"$REMOTE_MAP"
+  printf 'candidate|%s|%s\n' "$candidate_digest" "$revision" >>"$REMOTE_MAP"
 }
 
 # 1. Candidate actual: stable se mueve al digest validado.
-seed "$DIGEST" "$DIGEST" "$REVISION"
+seed 200 "$DIGEST" "$DIGEST" "$REVISION"
 printf 'stable|%s|%s\n' "$OTHER_DIGEST" "$REVISION" >>"$REMOTE_MAP"
 : >"$CALL_LOG"
 
@@ -105,7 +110,7 @@ jq -e --arg digest "$DIGEST" '
 ' "$ev1" >/dev/null
 
 # 2. Stable ya está en el digest: no copia.
-seed "$DIGEST" "$DIGEST" "$REVISION"
+seed 201 "$DIGEST" "$DIGEST" "$REVISION"
 printf 'stable|%s|%s\n' "$DIGEST" "$REVISION" >>"$REMOTE_MAP"
 : >"$CALL_LOG"
 
@@ -119,7 +124,7 @@ fi
 jq -e '.status == "already_stable" and .promoted == false' "$ev2" >/dev/null
 
 # 3. Candidate avanzó: un run viejo no puede pisar stable.
-seed "$DIGEST" "$OTHER_DIGEST" "$REVISION"
+seed 202 "$DIGEST" "$OTHER_DIGEST" "$REVISION"
 printf 'stable|%s|%s\n' "$OTHER_DIGEST" "$REVISION" >>"$REMOTE_MAP"
 : >"$CALL_LOG"
 
@@ -137,7 +142,7 @@ jq -e --arg candidate "$OTHER_DIGEST" '
 ' "$ev3" >/dev/null
 
 # 4. Label OCI incorrecta: fail closed.
-seed "$DIGEST" "$DIGEST" "ffffffffffffffffffffffffffffffffffffffff"
+seed 203 "$DIGEST" "$DIGEST" "ffffffffffffffffffffffffffffffffffffffff"
 : >"$CALL_LOG"
 
 if run_promote 203 1 "${TMP_DIR}/bad-label.json" >/dev/null 2>&1; then
@@ -150,7 +155,7 @@ if grep -Fq 'skopeo copy' "$CALL_LOG"; then
 fi
 
 # 5. Error de inspección de candidate: fail closed.
-seed "$DIGEST" "$DIGEST" "$REVISION"
+seed 204 "$DIGEST" "$DIGEST" "$REVISION"
 : >"$CALL_LOG"
 export FAKE_FATAL_TAG="candidate"
 
@@ -208,8 +213,8 @@ grep -Fq "ref: \${{ github.event.workflow_run.head_sha }}" "$workflow" || {
   exit 1
 }
 
-grep -Fq "IMAGE_REF=\"\${IMAGE_NAME}:sha-\${REVISION}\"" "$workflow" || {
-  echo "FAIL: promoción no valida la identidad inmutable sha-<commit>" >&2
+grep -Fq "IMAGE_REF=\"\${IMAGE_NAME}:run-\${SOURCE_RUN_ID}-\${SOURCE_RUN_ATTEMPT}\"" "$workflow" || {
+  echo "FAIL: promoción no usa la identidad inmutable del workflow run exacto" >&2
   exit 1
 }
 
