@@ -398,6 +398,8 @@ jobs:
             --repository "${IMAGE_NAME}" \
             --revision "${GITHUB_SHA}" \
             --digest "${IMAGE_DIGEST}" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
             --evidence-file signing-evidence/channel-publication.json
 
       - name: Upload signing and provenance evidence
