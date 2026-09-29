@@ -47,9 +47,13 @@ jobs:
           set -Eeuo pipefail
 
           REVISION="${{ github.event.workflow_run.head_sha }}"
-          IMAGE_REF="${IMAGE_NAME}:sha-${REVISION}"
+          SOURCE_RUN_ID="${{ github.event.workflow_run.id }}"
+          SOURCE_RUN_ATTEMPT="${{ github.event.workflow_run.run_attempt }}"
+          IMAGE_REF="${IMAGE_NAME}:run-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
 
           echo "REVISION=${REVISION}" >> "${GITHUB_ENV}"
+          echo "SOURCE_RUN_ID=${SOURCE_RUN_ID}" >> "${GITHUB_ENV}"
+          echo "SOURCE_RUN_ATTEMPT=${SOURCE_RUN_ATTEMPT}" >> "${GITHUB_ENV}"
           echo "IMAGE_REF=${IMAGE_REF}" >> "${GITHUB_ENV}"
 
           podman pull "${IMAGE_REF}"
@@ -182,8 +186,8 @@ jobs:
           bash scripts/publish/promote-stable.sh \
             --repository "${IMAGE_NAME}" \
             --revision "${REVISION}" \
-            --source-run-id "${{ github.event.workflow_run.id }}" \
-            --source-run-attempt "${{ github.event.workflow_run.run_attempt }}" \
+            --source-run-id "${SOURCE_RUN_ID}" \
+            --source-run-attempt "${SOURCE_RUN_ATTEMPT}" \
             --evidence-file promotion-evidence/stable-promotion.json
 
       - name: Upload stable promotion evidence
