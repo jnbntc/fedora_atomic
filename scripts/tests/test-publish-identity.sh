@@ -73,28 +73,40 @@ export FAKE_REVISION="$REVISION"
 export FAKE_DIGEST="$DIGEST"
 
 run_publish() {
+  local run_id="$1"
+  local attempt="$2"
+  local identity_file="$3"
+  shift 3
+
   bash "$SCRIPT" \
     --local-image localhost/fedora:latest \
     --repository "$REPO" \
-    --date 20260927 \
+    --date 20260929 \
     --revision "$REVISION" \
-    --run-id "$1" \
-    --run-attempt "$2" \
-    --identity-file "$3"
+    --run-id "$run_id" \
+    --run-attempt "$attempt" \
+    --identity-file "$identity_file" \
+    "$@"
 }
 
+# 1. Publicación normal: la identidad inmutable es el run exacto.
 identity_1="${TMP_DIR}/identity-1.json"
 run_publish 100 1 "$identity_1" >/dev/null
 
-for tag in "run-100-1" "sha-${REVISION}" "20260927-${REVISION:0:12}" "candidate" "latest"; do
+for tag in "run-100-1" "candidate" "latest"; do
   grep -Fq "${REPO}:${tag}" "$CALL_LOG" || {
     echo "FAIL: no publicó tag $tag" >&2
     exit 1
   }
 done
 
-[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 5 ]] || {
-  echo "FAIL: primera publicación esperaba 5 pushes" >&2
+if grep -Eq "${REPO}:(sha-${REVISION}|20260929-${REVISION:0:12})" "$CALL_LOG"; then
+  echo "FAIL: volvió a publicar identidades ambiguas por commit/fecha" >&2
+  exit 1
+fi
+
+[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 3 ]] || {
+  echo "FAIL: primera publicación esperaba run tag + candidate + latest" >&2
   cat "$CALL_LOG" >&2
   exit 1
 }
@@ -102,41 +114,46 @@ done
 jq -e --arg digest "$DIGEST" --arg rev "$REVISION" '
   .digest == $digest
   and .source_revision == $rev
-  and (.tags.immutable | length) == 3
+  and .tags.immutable == ["run-100-1"]
   and .tags.mutable == ["candidate", "latest"]
+  and .github_run.id == "100"
+  and .github_run.attempt == "1"
 ' "$identity_1" >/dev/null
 
+# 2. El mismo commit puede reconstruirse a otro digest en otra ejecución.
+: >"$REMOTE_MAP"
+: >"$CALL_LOG"
+export FAKE_DIGEST="$OTHER_DIGEST"
+
+identity_2="${TMP_DIR}/identity-2.json"
+run_publish 101 1 "$identity_2" >/dev/null
+
+jq -e --arg digest "$OTHER_DIGEST" --arg rev "$REVISION" '
+  .digest == $digest
+  and .source_revision == $rev
+  and .tags.immutable == ["run-101-1"]
+' "$identity_2" >/dev/null
+
+grep -Fq "${REPO}:run-101-1" "$CALL_LOG"
+
+# 3. Un run tag sí es inmutable: si ya existe, se bloquea.
 cat >"$REMOTE_MAP" <<EOF
-sha-${REVISION} $DIGEST
-20260927-${REVISION:0:12} $DIGEST
+run-102-1 $DIGEST
 EOF
 : >"$CALL_LOG"
+export FAKE_DIGEST="$OTHER_DIGEST"
 
-run_publish 101 1 "${TMP_DIR}/identity-2.json" >/dev/null
-
-[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 3 ]] || {
-  echo "FAIL: reutilización esperaba run tag + candidate + latest" >&2
-  cat "$CALL_LOG" >&2
-  exit 1
-}
-
-cat >"$REMOTE_MAP" <<EOF
-sha-${REVISION} $OTHER_DIGEST
-EOF
-: >"$CALL_LOG"
-
-if run_publish 102 1 "${TMP_DIR}/identity-conflict.json" >/dev/null 2>&1; then
-  echo "FAIL: conflicto de digest no bloqueó publicación" >&2
+if run_publish 102 1 "${TMP_DIR}/identity-duplicate-run.json" >/dev/null 2>&1; then
+  echo "FAIL: reutilizó un run tag ya existente" >&2
   exit 1
 fi
 
-if grep -Eq "${REPO}:(candidate|latest)" "$CALL_LOG"; then
-  echo "FAIL: candidate/latest se movieron pese al conflicto" >&2
+if grep -q '^podman push ' "$CALL_LOG"; then
+  echo "FAIL: hubo push después de detectar run tag duplicado" >&2
   exit 1
 fi
 
-grep -Fq "${REPO}:run-102-1" "$CALL_LOG"
-
+# 4. Error remoto no se interpreta como ausencia.
 : >"$REMOTE_MAP"
 : >"$CALL_LOG"
 export FAKE_SKOPEO_FATAL=1
@@ -152,6 +169,7 @@ if grep -q '^podman push ' "$CALL_LOG"; then
 fi
 unset FAKE_SKOPEO_FATAL
 
+# 5. La label OCI debe corresponder al commit fuente.
 : >"$CALL_LOG"
 export FAKE_REVISION="ffffffffffffffffffffffffffffffffffffffff"
 
@@ -165,30 +183,16 @@ if grep -q '^podman push ' "$CALL_LOG"; then
   exit 1
 fi
 
-# ---------------------------------------------------------------------------
-# Caso 6: publicación diferida no mueve candidate/latest.
-# ---------------------------------------------------------------------------
+# 6. Publicación diferida crea solo la identidad del run.
 : >"$REMOTE_MAP"
 : >"$CALL_LOG"
 export FAKE_REVISION="$REVISION"
+export FAKE_DIGEST="$DIGEST"
 
 identity_6="${TMP_DIR}/identity-deferred.json"
-bash "$SCRIPT" \
-  --local-image localhost/fedora:latest \
-  --repository "$REPO" \
-  --date 20260927 \
-  --revision "$REVISION" \
-  --run-id 105 \
-  --run-attempt 1 \
-  --identity-file "$identity_6" \
-  --defer-channels >/dev/null
+run_publish 105 1 "$identity_6" --defer-channels >/dev/null
 
-for tag in "run-105-1" "sha-${REVISION}" "20260927-${REVISION:0:12}"; do
-  grep -Fq "${REPO}:${tag}" "$CALL_LOG" || {
-    echo "FAIL: publicación diferida no creó $tag" >&2
-    exit 1
-  }
-done
+grep -Fq "${REPO}:run-105-1" "$CALL_LOG"
 
 if grep -Eq "${REPO}:(candidate|latest)" "$CALL_LOG"; then
   echo "FAIL: publicación diferida movió candidate/latest" >&2
@@ -196,12 +200,15 @@ if grep -Eq "${REPO}:(candidate|latest)" "$CALL_LOG"; then
   exit 1
 fi
 
-[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 3 ]] || {
-  echo "FAIL: publicación diferida esperaba 3 pushes" >&2
+[[ "$(grep -c '^podman push ' "$CALL_LOG")" -eq 1 ]] || {
+  echo "FAIL: publicación diferida esperaba un único push inmutable" >&2
   cat "$CALL_LOG" >&2
   exit 1
 }
 
-jq -e '.channels_deferred == true' "$identity_6" >/dev/null
+jq -e '
+  .channels_deferred == true
+  and .tags.immutable == ["run-105-1"]
+' "$identity_6" >/dev/null
 
-echo "OK: identidad OCI inmutable, conflicto y fail-closed validados."
+echo "OK: identidad OCI por run, rebuild no hermético y fail-closed validados."
