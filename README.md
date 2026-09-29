@@ -73,7 +73,7 @@ El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como má
 * **Fedora Security Gate:** `dnf5 advisory` consulta la metadata nativa de Fedora contra el rpmdb exacto de la imagen recién construida. La política versionada en `security/vulnerability-policy.json` bloquea advisories `Critical` e `Important` disponibles; `Moderate` y `Low` son informativos.
 * **Grype advisory:** Grype `v0.119.0` analiza el SBOM como capa complementaria para dependencias embebidas (Go, Python, CPE, etc.). No se usa como autoridad para CVE del SO porque los probes de Etapa 5 comprobaron que no asociaba los RPM OSTree con namespaces Fedora.
 * **Evidencia:** cada build conserva por 30 días el resultado de smoke tests, los dos SBOM, el reporte Grype y el JSON de advisories Fedora como artifact de GitHub Actions.
-* **Registro, identidad y firma:** cada publicación crea `sha-<commit40>`, `YYYYMMDD-<sha12>` y `run-<run_id>-<attempt>`, todos asociados al mismo digest OCI. Antes de mover `candidate`/`latest`, ese digest se firma con Cosign `v3.1.3` mediante identidad efímera GitHub OIDC y se generan provenance SLSA + SBOM attestation. `stable` solo se mueve después de una segunda validación que incluye firma, attestations, smoke tests y Fedora gate.
+* **Registro, identidad y firma:** cada publicación crea un tag inmutable `run-<run_id>-<attempt>` asociado al digest OCI exacto de esa ejecución. El commit queda registrado como revision OCI y en la provenance, pero no se usa como identidad binaria porque el build consume inputs upstream mutables y el mismo commit puede producir otro digest en un rebuild posterior. Antes de mover `candidate`/`latest`, el digest se firma con Cosign `v3.1.3` mediante identidad efímera GitHub OIDC y recibe provenance SLSA + SBOM attestation. `stable` solo se mueve después de una segunda validación que incluye firma, attestations, smoke tests y Fedora gate.
 
 ### 2. Política de seguridad del artefacto
 
@@ -92,8 +92,6 @@ podman build
           └── Fedora Critical/Important disponibles?
                   ├── sí → build FAIL / no push
                   └── no → identidad OCI inmutable
-                              ├── sha-<commit40>
-                              ├── YYYYMMDD-<sha12>
                               └── run-<id>-<attempt>
                                     │
                                     ├── Cosign keyless signature
@@ -122,18 +120,20 @@ La publicación usa `scripts/publish/publish-image.sh` y trata el digest OCI com
 ```text
 run-<run_id>-<attempt>  ── push inicial ──► digest sha256:...
                                       │
-                                      ├── sha-<commit40>
-                                      └── YYYYMMDD-<sha12>
-                                              │
-                                              ├── sign + attest
-                                              ├── verify
-                                              ├── candidate
-                                              └── latest
+                                      ├── source revision = commit
+                                      ├── sign + attest
+                                      ├── verify
+                                      ├── candidate
+                                      └── latest
 ```
 
-Los tres tags de identidad son gestionados como **inmutables por política**. Antes de crear `sha-...` o el tag fecha+commit, el pipeline consulta GHCR con Skopeo. Si el tag ya existe con el mismo digest se reutiliza; si apunta a otro digest, el workflow falla. `candidate` y `latest` quedan diferidos hasta que la firma y las attestations hayan sido creadas y verificadas. Esto también detecta el caso importante de un mismo commit que intenta producir un artefacto diferente en una ejecución posterior.
+El tag `run-<run_id>-<attempt>` es inmutable por construcción y se comprueba antes de publicar. El **digest OCI** sigue siendo la identidad primaria. `candidate` y `latest` quedan diferidos hasta que firma y attestations hayan sido creadas y verificadas.
 
-Cada publicación exitosa genera `security-evidence/image-identity.json` con repositorio, digest, commit, run ID, attempt y tags. Ese archivo se conserva como artifact durante 90 días.
+Esta separación es deliberada: el build no es hermético. Usa `--pull=always` y repositorios upstream que evolucionan, por lo que dos ejecuciones del mismo commit pueden producir digests distintos sin que exista una contradicción. Lo que no puede cambiar es el artefacto asociado a una ejecución concreta.
+
+Los tags históricos `sha-<commit40>` y `YYYYMMDD-<sha12>` permanecen reconocidos por la política de cleanup como formatos legacy, pero ya no participan del release.
+
+Cada publicación exitosa genera `security-evidence/image-identity.json` con repositorio, digest, commit, run ID, attempt y tag de ejecución. Ese archivo se conserva como artifact durante 90 días.
 
 ### 4. Firma keyless, provenance y SBOM attestation
 
@@ -163,13 +163,13 @@ gh attestation verify \
   --bundle-from-oci
 ```
 
-> **Límite importante:** firma y provenance prueban identidad, integridad y contexto de construcción; no convierten el build en hermético. La imagen sigue consumiendo una base Fedora y repositorios upstream que pueden cambiar. Si el mismo commit reconstruye un digest distinto, la política de identidad de Etapa 7 lo detecta y bloquea los canales mutables.
+> **Límite importante:** firma y provenance prueban identidad, integridad y contexto de construcción; no convierten el build en hermético. La imagen sigue consumiendo una base Fedora y repositorios upstream que pueden cambiar. Por eso la identidad inmutable se asocia a la ejecución exacta y al digest, mientras el commit queda registrado como revision fuente.
 
 ### 5. Promoción candidate → stable
 
 `candidate` representa el build de `main` más reciente que completó build, smoke tests y security gate. La promoción a `stable` se ejecuta automáticamente con `.github/workflows/promote-stable.yml` después de un build exitoso.
 
-La promoción **no reconstruye** la imagen: descarga `sha-<commit40>` desde GHCR y vuelve a ejecutar sobre ese artefacto publicado:
+La promoción **no reconstruye** la imagen: descarga el tag inmutable `run-<run_id>-<attempt>` de la ejecución que disparó el workflow y vuelve a ejecutar sobre ese artefacto publicado:
 
 1. verificación Cosign keyless;
 2. verificación de provenance SLSA y SBOM attestation;
@@ -177,7 +177,7 @@ La promoción **no reconstruye** la imagen: descarga `sha-<commit40>` desde GHCR
 4. consulta `dnf5 advisory` contra Fedora;
 5. Fedora security gate.
 
-`main` y la promoción comparten el lock `fedora-atomic-release`. Si un build nuevo se adelanta, el promotor viejo compara el digest de su `sha-<commit>` con el `candidate` actual y termina sin tocar `stable`. Por eso una promoción atrasada no puede pisar un candidate más nuevo.
+`main` y la promoción comparten el lock `fedora-atomic-release`. Si un build nuevo se adelanta, el promotor viejo compara el digest de su identidad `run-...` con el `candidate` actual y termina sin tocar `stable`. Por eso una promoción atrasada no puede pisar un candidate más nuevo.
 
 El canal recomendado para un host que prioriza estabilidad es **`stable`**. `candidate` es útil para pruebas anticipadas y `latest` conserva la semántica de “último build validado”.
 
@@ -191,7 +191,7 @@ La retención del registro está desacoplada del build y se gestiona mediante `.
 * **Schedule:** domingo 04:37 UTC / 01:37 ART.
 * **Manual:** `workflow_dispatch`, con `dry-run` como opción predeterminada.
 * **Seguridad:** el script usa `set -Eeuo pipefail`, diferencia un `404` de otros errores de API y no oculta fallos de autenticación o del backend.
-* **Retención:** para el paquete principal `fedora_atomic`, las versiones `untagged` se preservan deliberadamente porque GHCR puede materializar firmas/attestations OCI como referrers sin tags convencionales. Solo se consideran purgables versiones cuyos tags sean exclusivamente formatos gestionados (`YYYYMMDD` legado, `YYYYMMDD-SHA12`, `sha-SHA40`, `run-ID-ATTEMPT`); `latest`, `candidate`, `stable` y cualquier tag especial/desconocido quedan protegidos. El cache mantiene su política independiente y sí elimina `untagged`.
+* **Retención:** para el paquete principal `fedora_atomic`, las versiones `untagged` se preservan deliberadamente porque GHCR puede materializar firmas/attestations OCI como referrers sin tags convencionales. Solo se consideran purgables versiones cuyos tags sean exclusivamente formatos gestionados (`YYYYMMDD`, `YYYYMMDD-SHA12` y `sha-SHA40` como formatos legacy, más `run-ID-ATTEMPT` como identidad actual); `latest`, `candidate`, `stable` y cualquier tag especial/desconocido quedan protegidos. El cache mantiene su política independiente y sí elimina `untagged`.
 * **Validación:** cada PR que modifica esta lógica ejecuta `bash -n`, ShellCheck y pruebas unitarias con un `gh` simulado, sin tocar GHCR.
 
 ### 7. Configuración declarativa del rootfs
