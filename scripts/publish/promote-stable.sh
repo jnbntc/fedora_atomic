@@ -130,13 +130,13 @@ require_cmd date
 [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]] || die "--source-run-id debe ser entero"
 [[ "$SOURCE_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || die "--source-run-attempt debe ser entero"
 
-revision_tag="sha-${REVISION}"
-revision_json="$(inspect_required "$revision_tag")" || die "Falta identidad inmutable ${revision_tag}"
+build_tag="run-${SOURCE_RUN_ID}-${SOURCE_RUN_ATTEMPT}"
+build_json="$(inspect_required "$build_tag")" || die "Falta identidad inmutable ${build_tag}"
 candidate_json="$(inspect_required "$CANDIDATE_TAG")" || die "Falta canal ${CANDIDATE_TAG}"
 
-revision_digest="$(jq -r '.Digest' <<<"$revision_json")"
+build_digest="$(jq -r '.Digest' <<<"$build_json")"
 candidate_digest="$(jq -r '.Digest' <<<"$candidate_json")"
-image_revision="$(jq -r '.Labels["org.opencontainers.image.revision"] // empty' <<<"$revision_json")"
+image_revision="$(jq -r '.Labels["org.opencontainers.image.revision"] // empty' <<<"$build_json")"
 
 [[ "$image_revision" == "$REVISION" ]] \
   || die "Label OCI revision=${image_revision:-<vacío>} no coincide con ${REVISION}"
@@ -150,41 +150,41 @@ else
   stable_before=""
 fi
 
-if [[ "$candidate_digest" != "$revision_digest" ]]; then
-  warn "Promoción obsoleta: candidate=${candidate_digest}, build=${revision_digest}. No se toca stable."
-  write_evidence "stale_candidate" false "$revision_digest" "$candidate_digest" "$stable_before" "$stable_before"
+if [[ "$candidate_digest" != "$build_digest" ]]; then
+  warn "Promoción obsoleta: candidate=${candidate_digest}, build=${build_digest}. No se toca stable."
+  write_evidence "stale_candidate" false "$build_digest" "$candidate_digest" "$stable_before" "$stable_before"
   {
     echo "### Stable promotion"
     echo
     echo "- Estado: **stale candidate — sin promoción**"
-    echo "- Build: \`${revision_digest}\`"
+    echo "- Build: \`${build_digest}\`"
     echo "- Candidate actual: \`${candidate_digest}\`"
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
   exit 0
 fi
 
-if [[ "$stable_before" == "$revision_digest" ]]; then
-  log "stable ya apunta al digest validado: ${revision_digest}"
-  write_evidence "already_stable" false "$revision_digest" "$candidate_digest" "$stable_before" "$stable_before"
+if [[ "$stable_before" == "$build_digest" ]]; then
+  log "stable ya apunta al digest validado: ${build_digest}"
+  write_evidence "already_stable" false "$build_digest" "$candidate_digest" "$stable_before" "$stable_before"
   {
     echo "### Stable promotion"
     echo
     echo "- Estado: **already stable**"
-    echo "- Digest: \`${revision_digest}\`"
+    echo "- Digest: \`${build_digest}\`"
   } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
   exit 0
 fi
 
-log "Promoviendo ${revision_tag} -> ${STABLE_TAG}"
-skopeo copy "docker://${REPOSITORY}:${revision_tag}" "docker://${REPOSITORY}:${STABLE_TAG}"
+log "Promoviendo ${build_tag} -> ${STABLE_TAG}"
+skopeo copy "docker://${REPOSITORY}:${build_tag}" "docker://${REPOSITORY}:${STABLE_TAG}"
 
 stable_after="$(inspect_optional_digest "$STABLE_TAG")" \
   || die "No se pudo verificar stable después de la promoción"
 
-[[ "$stable_after" == "$revision_digest" ]] \
-  || die "stable quedó en digest inesperado: ${stable_after} != ${revision_digest}"
+[[ "$stable_after" == "$build_digest" ]] \
+  || die "stable quedó en digest inesperado: ${stable_after} != ${build_digest}"
 
-write_evidence "promoted" true "$revision_digest" "$candidate_digest" "$stable_before" "$stable_after"
+write_evidence "promoted" true "$build_digest" "$candidate_digest" "$stable_before" "$stable_after"
 
 log "Stable promovido: ${REPOSITORY}:stable -> ${stable_after}"
 {
