@@ -203,3 +203,38 @@ if [[ -e "$ROOT_DIR/.github/workflows/stage10-recovery-probe.yml" ]]; then
 fi
 
 echo "OK: no queda workflow temporal de recovery."
+
+# Snapshot: diagnósticos separados y tolerancia a un user bus ausente.
+cat >"${BIN}/systemctl" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'systemctl %s\n' "$*" >>"${FAKE_LOG:?}"
+if [[ "${1:-}" == --user ]]; then
+  echo 'Failed to connect to user bus' >&2
+  exit 1
+fi
+printf 'system diagnostic\n'
+EOF
+cat >"${BIN}/tuned-adm" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'tuned-adm %s\n' "$*" >>"${FAKE_LOG:?}"
+printf 'Current active profile: balanced\n'
+EOF
+for name in rpm flatpak; do
+  printf '#!/usr/bin/env bash\nexit 0\n' >"${BIN}/$name"
+done
+chmod +x "${BIN}/systemctl" "${BIN}/tuned-adm" "${BIN}/rpm" "${BIN}/flatpak"
+bash "$ROOT_DIR/scripts/recovery/capture-host-state.sh" "${TMP_DIR}/snapshots" >/dev/null
+snapshots=("${TMP_DIR}/snapshots"/*)
+snapshot="${snapshots[0]}"
+grep -Fxq 'systemctl --failed --no-pager' "$LOG"
+grep -Fxq 'systemctl --user --failed --no-pager' "$LOG"
+grep -Fxq 'tuned-adm active' "$LOG"
+grep -Fq 'system diagnostic' "$snapshot/system-failed-units.txt"
+grep -Fq 'Failed to connect to user bus' "$snapshot/user-failed-units.txt"
+grep -Fq 'balanced' "$snapshot/tuned-active-profile.txt"
+for filename in system-failed-units.txt user-failed-units.txt tuned-active-profile.txt; do
+  grep -Fq "$filename" "$snapshot/README.txt"
+done
+echo "OK: snapshot separa system/user y tolera user bus ausente."

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+POWER_SUPPLY_ROOT="${POWER_SUPPLY_ROOT:-/sys/class/power_supply}"
+TUNED_ADM="${TUNED_ADM:-/usr/bin/tuned-adm}"
+
+warn() { printf '[WARNING] %s\n' "$*" >&2; }
+
+if ! command -v "$TUNED_ADM" >/dev/null 2>&1; then
+  warn "tuned-adm no está disponible: $TUNED_ADM; se conserva el perfil."
+  exit 0
+fi
+
+external=0
+online=0
+unknown=0
+shopt -s nullglob
+for supply in "$POWER_SUPPLY_ROOT"/*; do
+  [[ -d "$supply" ]] || continue
+  if ! IFS= read -r supply_type < "$supply/type"; then
+    unknown=1
+    continue
+  fi
+  case "$supply_type" in
+    Mains|USB*) ;;
+    *) continue ;;
+  esac
+  external=1
+  if ! IFS= read -r supply_online < "$supply/online"; then
+    unknown=1
+    continue
+  fi
+  case "$supply_online" in
+    1) online=1 ;;
+    0) ;;
+    *) unknown=1 ;;
+  esac
+done
+
+if (( online )); then
+  profile=balanced
+elif (( external && ! unknown )); then
+  profile=powersave
+else
+  warn "Estado de alimentación indeterminado; se conserva el perfil de TuneD."
+  exit 0
+fi
+
+printf '[INFO] Perfil seleccionado: %s\n' "$profile"
+if active="$(LC_ALL=C "$TUNED_ADM" active 2>/dev/null)"; then
+  if [[ "$active" =~ ^Current\ active\ profile:[[:space:]]*([^[:space:]]+)[[:space:]]*$ ]] &&
+     [[ "${BASH_REMATCH[1]}" == "$profile" ]]; then
+    printf '[INFO] El perfil %s ya está activo; sin cambios.\n' "$profile"
+    exit 0
+  fi
+fi
+"$TUNED_ADM" profile "$profile"

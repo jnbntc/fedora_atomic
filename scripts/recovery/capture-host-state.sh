@@ -25,9 +25,15 @@ if command -v flatpak >/dev/null 2>&1; then
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
+  systemctl --failed --no-pager >"$OUT/system-failed-units.txt" 2>&1 || true
+  systemctl --user --failed --no-pager >"$OUT/user-failed-units.txt" 2>&1 || true
   systemctl is-enabled rpm-ostreed-automatic.timer >"$OUT/rpm-ostreed-timer-enabled.txt" 2>&1 || true
   systemctl list-timers rpm-ostreed-automatic.timer --all --no-pager \
     >"$OUT/rpm-ostreed-timer-status.txt" 2>&1 || true
+fi
+
+if command -v tuned-adm >/dev/null 2>&1; then
+  tuned-adm active >"$OUT/tuned-active-profile.txt" 2>&1 || true
 fi
 
 if [[ -r /etc/rpm-ostreed.conf ]]; then
@@ -54,6 +60,9 @@ Incluye:
 - rpm-ostree status y JSON
 - inventario RPM
 - Flatpaks (si existen)
+- unidades fallidas del sistema (system-failed-units.txt)
+- unidades fallidas del usuario (user-failed-units.txt; registra errores si no hay user bus)
+- perfil TuneD activo, si tuned-adm existe (tuned-active-profile.txt)
 - estado del timer rpm-ostreed
 - rpm-ostreed.conf
 - nombres de repos YUM (no su contenido)

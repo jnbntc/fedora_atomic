@@ -82,7 +82,7 @@ RUN set -eux; \
 COPY files/etc/ /etc/
 COPY files/usr/ /usr/
 
-RUN chmod 0755 /usr/libexec/fedora-atomic-verified-update
+RUN chmod 0755 /usr/libexec/fedora-atomic-verified-update /usr/libexec/fedora-power-profile
 
 # 6. Activación de Servicios Base
 RUN ln -sf /usr/lib/systemd/system/podman-auto-update.timer /usr/lib/systemd/system/multi-user.target.wants/ && \

@@ -1,0 +1,8 @@
+[Unit]
+Description=Select TuneD profile from external power supplies
+Wants=tuned.service
+After=tuned.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/fedora-power-profile

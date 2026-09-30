@@ -46,6 +46,7 @@ FORBIDDEN_PACKAGES=(
 )
 
 REQUIRED_COMMANDS=(
+  tuned-adm
   code
   virt-manager
   virsh
@@ -157,6 +158,13 @@ inside_image() {
   test -d /ostree || fail "Árbol OSTree ausente"
   test -x /usr/bin/starship || fail "/usr/bin/starship no es ejecutable"
   test -x /usr/bin/cosign || fail "/usr/bin/cosign no es ejecutable"
+  test -x /usr/libexec/fedora-power-profile || fail "selector de energía ausente/no ejecutable"
+  test -f /usr/lib/systemd/system/fedora-power-profile.service || fail "service de energía ausente"
+  test -f /etc/udev/rules.d/99-battery.rules || fail "regla de energía ausente"
+  test -f /etc/tmpfiles.d/lenovo-conservation.conf || fail "conservación Lenovo ausente"
+  if grep -Eq 'powerprofilesctl|conservation_mode' /etc/udev/rules.d/99-battery.rules /etc/tmpfiles.d/lenovo-conservation.conf; then
+    fail "configuración de energía obsoleta"
+  fi
   test -x /usr/libexec/fedora-atomic-verified-update || fail "updater verificado ausente/no ejecutable"
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.service || fail "service del updater ausente"
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.timer || fail "timer del updater ausente"

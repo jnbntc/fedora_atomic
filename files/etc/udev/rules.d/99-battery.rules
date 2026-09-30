@@ -1,2 +1,2 @@
-SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="/usr/bin/systemd-run --no-block /usr/bin/powerprofilesctl set power-saver"
-SUBSYSTEM=="power_supply", ATTR{online}=="1", RUN+="/usr/bin/systemd-run --no-block /usr/bin/powerprofilesctl set balanced"
+ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="/usr/bin/systemctl --no-block start fedora-power-profile.service"
+ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{online}=="1", RUN+="/usr/bin/systemctl --no-block start fedora-power-profile.service"
