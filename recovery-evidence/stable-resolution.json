@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repository": "ghcr.io/jnbntc/fedora_atomic",
+  "channel": "stable",
+  "digest": "sha256:1d754b597b25d634a49fbb5c0d4f9f82e48276e3f14287abdb14491f3ce25f62",
+  "source_revision": "c22da0b5b091fc7b57cce2f92a83f3e8b7bcad57",
+  "verified_at": "2026-09-27T23:24:11Z",
+  "verification": {
+    "cosign": true,
+    "slsa_provenance": true,
+    "spdx_attestation": true
+  }
+}

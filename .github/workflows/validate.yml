@@ -16,11 +16,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Bash syntax
-        run: bash -n scripts/tests/test-config-tree.sh
+        run: |
+          bash -n scripts/tests/test-config-tree.sh
+          bash -n scripts/tests/test-power-profile.sh
+          bash -n files/usr/libexec/fedora-power-profile
       - name: ShellCheck
-        run: shellcheck scripts/tests/test-config-tree.sh
+        run: shellcheck scripts/tests/test-config-tree.sh scripts/tests/test-power-profile.sh files/usr/libexec/fedora-power-profile
       - name: Validate config tree
-        run: bash scripts/tests/test-config-tree.sh
+        run: |
+          bash scripts/tests/test-config-tree.sh
+          bash scripts/tests/test-power-profile.sh
 
   image-contract:
     name: Image hardening & smoke contract

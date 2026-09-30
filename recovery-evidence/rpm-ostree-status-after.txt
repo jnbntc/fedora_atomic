@@ -1,0 +1,51 @@
+State: idle
+AutomaticUpdates: stage; rpm-ostreed-automatic.timer: inactive
+Deployments:
+  ostree-unverified-registry:ghcr.io/jnbntc/fedora_atomic@sha256:1d754b597b25d634a49fbb5c0d4f9f82e48276e3f14287abdb14491f3ce25f62 (index: 0)
+                   Digest: sha256:1d754b597b25d634a49fbb5c0d4f9f82e48276e3f14287abdb14491f3ce25f62
+                  Version: 44.20260927.0 (2026-09-27T20:45:12Z)
+               BaseCommit: 45de7a64b3d3eaddfa6cccda3b97e72da51c3661cc40a2e6131e873f72fc668f
+                   Commit: 2d88c42c332324127ccfff5ec074432cbc47f74d5069f21e90ce2e0d94f8daf8
+                           ├─ code (2026-09-25T14:28:00Z)
+                           ├─ fedora (2026-04-22T13:34:32Z)
+                           ├─ fedora-cisco-openh264 (2026-03-24T10:37:04Z)
+                           ├─ microsoft-edge (2026-09-25T21:48:40Z)
+                           ├─ tailscale-stable (2026-09-21T23:08:56Z)
+                           ├─ teamviewer (2026-09-18T14:27:55Z)
+                           ├─ updates (2026-09-27T00:52:34Z)
+                           └─ updates-archive (2026-09-17T02:15:59Z)
+                   Staged: yes
+                StateRoot: fedora
+            LocalPackages: teamviewer-15.80.4-0.x86_64
+
+● ostree-unverified-registry:ghcr.io/jnbntc/fedora_atomic@sha256:eadd7a4dc38025fd02b402b1c3d79d346a8ced0206248ade913290516f250c77 (index: 1)
+                   Digest: sha256:eadd7a4dc38025fd02b402b1c3d79d346a8ced0206248ade913290516f250c77
+                  Version: 44.20260927.0 (2026-09-27T18:16:04Z)
+               BaseCommit: 4008d28e475f764606334172dfc98864c7a2ec7620fbd36c3b8469bd8efba2c3
+                   Commit: 6ca17df92b52284ab2a2085758cdd2a8d8cd706d375f4c0930e2a36dc316b11b
+                           ├─ code (2026-09-25T14:28:00Z)
+                           ├─ fedora (2026-04-22T13:34:32Z)
+                           ├─ fedora-cisco-openh264 (2026-03-24T10:37:04Z)
+                           ├─ microsoft-edge (2026-09-25T21:48:40Z)
+                           ├─ tailscale-stable (2026-09-21T23:08:56Z)
+                           ├─ teamviewer (2026-09-18T14:27:55Z)
+                           ├─ updates (2026-09-27T00:52:34Z)
+                           └─ updates-archive (2026-09-17T02:15:59Z)
+                StateRoot: fedora
+            LocalPackages: teamviewer-15.80.4-0.x86_64
+
+  ostree-unverified-registry:ghcr.io/jnbntc/fedora_atomic:latest (index: 2)
+                   Digest: sha256:2c406aaabc62597ecd6c3927753b13abe71650887d516bb752d2311ba5842b32
+                  Version: 44.20260923.0 (2026-09-24T00:21:00Z)
+               BaseCommit: 0a7dbb120e997bf3704bf3d2924bc8694f03aba7302d95ec9d3abc225751a150
+                   Commit: 45dd3f6ace1d2d06a5b5d29798f6be8a860c6e115640ecd595e633d52d7b38f1
+                           ├─ code (2026-09-22T14:33:24Z)
+                           ├─ fedora (2026-04-22T13:34:32Z)
+                           ├─ fedora-cisco-openh264 (2026-03-24T10:37:04Z)
+                           ├─ microsoft-edge (2026-09-22T19:58:55Z)
+                           ├─ tailscale-stable (2026-09-21T23:08:56Z)
+                           ├─ teamviewer (2026-09-18T14:27:55Z)
+                           ├─ updates (2026-09-24T00:55:01Z)
+                           └─ updates-archive (2026-09-17T02:15:59Z)
+                StateRoot: fedora
+            LocalPackages: teamviewer-15.80.4-0.x86_64

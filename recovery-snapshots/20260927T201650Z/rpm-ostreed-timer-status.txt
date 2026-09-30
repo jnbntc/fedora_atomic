@@ -1,0 +1,4 @@
+NEXT                        LEFT LAST                              PASSED UNIT                        ACTIVATES
+Mon 2026-09-28 12:48:59 -03  19h Sun 2026-09-27 12:48:53 -03 4h 27min ago rpm-ostreed-automatic.timer rpm-ostreed-automatic.service
+
+1 timers listed.

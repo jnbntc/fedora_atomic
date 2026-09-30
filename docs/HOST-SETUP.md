@@ -112,6 +112,12 @@ bash scripts/recovery/capture-host-state.sh
 rpm-ostree status -v
 ```
 
+## Energía y batería
+
+Fedora 44 usa TuneD/tuned-ppd. Los eventos AC/batería de udev disparan `fedora-power-profile.service`, sin habilitarlo en boot: selecciona `balanced` con alguna fuente Mains/USB online y `powersave` con todas offline. Si el estado es indeterminado, conserva el perfil; si ya está activo, no lo reaplica.
+
+La conservación Lenovo se configura mediante tmpfiles con `charge_types=Long_Life` en `/sys/class/power_supply/BAT*/charge_types`.
+
 ## Verificación después de reboot
 
 ```bash
@@ -121,6 +127,8 @@ systemctl is-active tailscaled
 systemctl status fedora-atomic-verified-update.timer --no-pager
 systemctl list-timers fedora-atomic-verified-update.timer --all
 systemctl --failed --no-pager
+systemctl --user --failed --no-pager
+tuned-adm active
 ```
 
 Si el deployment nuevo no funciona, seguir `docs/DISASTER-RECOVERY.md`.

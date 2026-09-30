@@ -215,6 +215,8 @@ files/etc/
 
 Los servicios base (`podman-auto-update.timer`, `tailscaled`, `thermald` y `libvirtd`) mantienen symlinks explícitos en el `Containerfile`. El updater verificado, en cambio, se habilita con `systemctl enable fedora-atomic-verified-update.timer`, por lo que su enlace queda bajo `/etc/systemd/system/timers.target.wants/`. Los smoke tests verifican explícitamente ese contrato.
 
+Fedora 44 usa TuneD/tuned-ppd: los eventos AC/batería disparan `fedora-power-profile.service` para seleccionar `balanced` con alimentación externa o `powersave` sin ella. La conservación Lenovo usa `charge_types=Long_Life` mediante tmpfiles. La auditoría post-boot separa `systemctl --failed --no-pager` y `systemctl --user --failed --no-pager`; el snapshot también guarda el perfil TuneD activo.
+
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 
 ### 8. Nivel CD: Host local
