@@ -20,29 +20,132 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Falta comando requerido: $1"
 }
 
-inside_update_window() {
-  local hhmm
-  hhmm="$(date +%H%M)"
+# Estado persistente: una comprobación fallida o diferida no rejuvenece last-success.
+STATE_DIR="${FEDORA_ATOMIC_STATE_DIR:-${STATE_DIRECTORY:-/var/lib/fedora-atomic-verified-update}}"
+POWER_SUPPLY_ROOT="${POWER_SUPPLY_ROOT:-/sys/class/power_supply}"
+SUCCESS_INTERVAL=$((6 * 60 * 60))
+STALE_AFTER=$((72 * 60 * 60))
 
-  # Ventanas deliberadamente fuera del horario laboral.
-  # También evita ejecuciones tardías al volver de suspend/encender la notebook.
-  if (( 10#$hhmm >= 220 && 10#$hhmm <= 310 )); then
+if [[ "${FEDORA_ATOMIC_ALLOW_NON_ROOT:-0}" != "1" ]]; then
+  [[ "${EUID}" -eq 0 ]] || die "Debe ejecutarse como root"
+fi
+
+umask 0077
+mkdir -p "$STATE_DIR"
+chmod 0700 "$STATE_DIR"
+require_cmd flock
+exec 9>"${STATE_DIR}/lock"
+if ! flock -n 9; then
+  log "Ya hay otra ejecución del updater; no se hace nada."
+  exit 0
+fi
+
+write_stamp() {
+  local name="$1" value="$2"
+  printf '%s\n' "$value" >"${STATE_DIR}/${name}.tmp"
+  mv -f "${STATE_DIR}/${name}.tmp" "${STATE_DIR}/${name}"
+}
+
+read_stamp() {
+  local name="$1" value
+  if [[ ! -e "${STATE_DIR}/${name}" ]]; then
+    printf '0\n'
+    return
+  fi
+  value="$(cat "${STATE_DIR}/${name}")"
+  # Un reloj atrasado o estado corrupto nunca habilita recuperación laboral.
+  if [[ ! "$value" =~ ^[1-9][0-9]{0,10}$ ]] || (( value > now )); then
+    warn "Timestamp ${name} inválido/futuro; se reinicia su plazo."
+    if [[ "$name" == last-success ]]; then
+      # No inventar una verificación exitosa: reiniciar sólo el período de gracia.
+      write_stamp first-seen "$now"
+      rm -f "${STATE_DIR}/last-success"
+      value=0
+    else
+      write_stamp "$name" "$now"
+      value="$now"
+    fi
+  fi
+  printf '%s\n' "$value"
+}
+
+on_external_power() {
+  local supply type online
+  for supply in "$POWER_SUPPLY_ROOT"/*; do
+    [[ -r "${supply}/type" && -r "${supply}/online" ]] || continue
+    type="$(cat "${supply}/type")"
+    online="$(cat "${supply}/online")"
+    case "$type" in
+      Mains|USB*) [[ "$online" == 1 ]] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+policy_allows_update() {
+  local clock weekday hhmm
+  if [[ "${FEDORA_ATOMIC_ALLOW_ANY_TIME:-0}" == 1 ]]; then
+    mode=manual
     return 0
   fi
-  if (( 10#$hhmm >= 1820 && 10#$hhmm <= 1910 )); then
+  # Una sola lectura conserva coherencia al cruzar medianoche.
+  clock="$(date +%u%H%M)"
+  weekday="${clock:0:1}"
+  hhmm=$((10#${clock:1:4}))
+  if (( (hhmm >= 220 && hhmm <= 310) || (hhmm >= 1820 && hhmm <= 1910) )); then
+    mode=window
+    return 0
+  fi
+  # Horario laboral conservador: lunes a viernes, 08:00 <= hora < 18:20.
+  if (( weekday >= 6 || hhmm < 800 || hhmm >= 1820 )); then
+    mode=catch-up
+    return 0
+  fi
+  if (( $(date +%s) - baseline >= STALE_AFTER )) && on_external_power; then
+    mode=stale-recovery
     return 0
   fi
   return 1
 }
 
-if [[ "${FEDORA_ATOMIC_ALLOW_ANY_TIME:-0}" != "1" ]] && ! inside_update_window; then
-  log "Fuera de las ventanas 02:20-03:10 / 18:20-19:10; no se hace nada."
+now="$(date +%s)"
+last_success="$(read_stamp last-success)"
+first_seen="$(read_stamp first-seen)"
+if (( first_seen == 0 )); then
+  first_seen="$now"
+  write_stamp first-seen "$now"
+fi
+last_attempt="$(read_stamp last-attempt)"
+baseline="$last_success"
+(( baseline > 0 )) || baseline="$first_seen"
+mode=""
+
+if ! policy_allows_update; then
+  log "Horario laboral: se difiere hasta fuera de jornada (recuperación: 72 h sin éxito y alimentación externa)."
   exit 0
 fi
 
-if [[ "${FEDORA_ATOMIC_ALLOW_NON_ROOT:-0}" != "1" ]]; then
-  [[ "${EUID}" -eq 0 ]] || die "Debe ejecutarse como root"
+# Las dos ventanas originales y el override manual siguen siendo explícitos.
+# El catch-up evita consultas de red repetidas después de un éxito reciente.
+if [[ "$mode" == catch-up || "$mode" == stale-recovery ]]; then
+  if (( last_success > 0 && now - last_success < SUCCESS_INTERVAL )); then
+    log "Comprobación exitosa hace menos de 6 h; se difiere el catch-up."
+    exit 0
+  fi
+  retry_interval=$((30 * 60))
+  [[ "$mode" != stale-recovery ]] || retry_interval="$SUCCESS_INTERVAL"
+  if (( last_attempt > 0 && now - last_attempt < retry_interval )); then
+    log "Intento reciente; se difiere ${mode}."
+    exit 0
+  fi
 fi
+
+write_stamp last-attempt "$now"
+log "Política autorizada: ${mode}."
+
+mark_success() {
+  write_stamp last-success "$(date +%s)"
+}
 
 for cmd in "$COSIGN_BIN" "$SKOPEO_BIN" "$RPM_OSTREE_BIN" "$JQ_BIN"; do
   require_cmd "$cmd"
@@ -104,11 +207,20 @@ staged_ref="$("$JQ_BIN" -r '
 
 if [[ "$booted_digest" == "$digest" ]]; then
   log "El sistema ya está arrancado en stable ${digest}; sin cambios."
+  mark_success
   exit 0
 fi
 
 if [[ "$staged_digest" == "$digest" ]]; then
   log "Stable ${digest} ya está staged; falta solamente reiniciar cuando sea conveniente."
+  mark_success
+  exit 0
+fi
+
+# Si la verificación cruzó el inicio de jornada o se desconectó AC durante
+# una recuperación laboral, no limpiar ni preparar deployments.
+if ! policy_allows_update; then
+  log "La guarda de horario/energía cambió durante la verificación; stage diferido."
   exit 0
 fi
 
@@ -132,6 +244,8 @@ staged_after="$("$JQ_BIN" -r '
 
 [[ "$staged_after" == "$digest" ]] \
   || die "rpm-ostree no dejó staged el digest esperado: ${staged_after:-<vacío>}"
+
+mark_success
 
 log "Update preparado correctamente. NO se reinicia automáticamente."
 log "Nuevo stable staged: ${digest}"

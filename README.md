@@ -222,7 +222,7 @@ La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el 
 ### 8. Nivel CD: Host local
 El host local (notebook) opera como un nodo pasivo de consumo. Para uso normal se recomienda seguir el canal `stable`; `candidate` queda reservado para validación anticipada.
 
-La imagen incluye ahora un updater local verificado: resuelve `stable`, valida firma Cosign + provenance SLSA + SBOM SPDX y recién después prepara un rebase fijado por digest. Corre a las **18:30** y **02:30**, no hace catch-up al encender, trabaja con prioridad baja y **nunca reinicia automáticamente**.
+La imagen incluye ahora un updater local verificado: resuelve `stable`, valida firma Cosign + provenance SLSA + SBOM SPDX y recién después prepara un rebase fijado por digest. Conserva las ventanas de **18:30** y **02:30** y suma catch-up al encender/retomar y comprobaciones cada 30 minutos. De lunes a viernes protege **08:00–18:20**: sólo admite recuperación automática tras **72 h sin una comprobación exitosa**, con alimentación externa y como máximo un intento cada 6 h. Fuera de jornada permite recuperar actualizaciones perdidas; trabaja con prioridad baja y **nunca reinicia automáticamente**.
 
 El timer estándar `rpm-ostreed-automatic.timer` queda fuera de este flujo para evitar actualizaciones que no pasen por la verificación criptográfica local. Detalles en **[docs/HOST-SETUP.md](docs/HOST-SETUP.md)**.
 
