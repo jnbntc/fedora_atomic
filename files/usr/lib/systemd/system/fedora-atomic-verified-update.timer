@@ -1,12 +1,15 @@
 [Unit]
-Description=Check verified Fedora Atomic stable updates outside work hours
+Description=Check verified Fedora Atomic stable updates with guarded catch-up
 
 [Timer]
 OnCalendar=*-*-* 02:30:00
 OnCalendar=*-*-* 18:30:00
+OnBootSec=10min
+# Reintentos locales baratos; el script decide si corresponde usar la red.
+OnCalendar=*-*-* *:00,30:00
 AccuracySec=1min
 RandomizedDelaySec=0
-Persistent=false
+Persistent=true
 WakeSystem=false
 Unit=fedora-atomic-verified-update.service
 

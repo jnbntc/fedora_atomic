@@ -11,3 +11,5 @@ Nice=10
 IOSchedulingClass=idle
 TimeoutStartSec=45min
 UMask=0077
+StateDirectory=fedora-atomic-verified-update
+StateDirectoryMode=0700

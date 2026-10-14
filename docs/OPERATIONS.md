@@ -56,7 +56,7 @@ stable
 - `promote-stable.yml`: promoción automática `candidate → stable`.
 - `cleanup.yml`: retención GHCR.
 - `recovery-drill.yml`: prueba mensual de recuperabilidad de `stable`.
-- `fedora-atomic-verified-update.timer`: updater local de la workstation; 18:30 y 02:30, sin reboot automático.
+- `fedora-atomic-verified-update.timer`: updater local de la workstation; ventanas de 18:30 y 02:30 más catch-up persistente cada 30 min y al boot; guarda laboral 08:00–18:20 L–V, excepción tras 72 h sin éxito con AC y reintentos cada 6 h; sin reboot automático (ver `HOST-SETUP.md`).
 - `validate.yml`: validación unificada de PRs; adentro separa configuración, hardening/smoke, seguridad/release y recovery.
 
 ## Qué significa cada tipo de fallo
