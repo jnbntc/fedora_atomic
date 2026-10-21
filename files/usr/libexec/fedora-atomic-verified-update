@@ -11,6 +11,7 @@ COSIGN_BIN="${COSIGN_BIN:-cosign}"
 SKOPEO_BIN="${SKOPEO_BIN:-skopeo}"
 RPM_OSTREE_BIN="${RPM_OSTREE_BIN:-rpm-ostree}"
 JQ_BIN="${JQ_BIN:-jq}"
+HOST_PACKAGES_CONFIG="${FEDORA_ATOMIC_HOST_PACKAGES_CONFIG:-/etc/fedora-atomic/host-packages.json}"
 
 log()  { printf '[verified-update] %s\n' "$*"; }
 warn() { printf '[verified-update] WARN: %s\n' "$*" >&2; }
@@ -195,57 +196,129 @@ log "Verificando SBOM SPDX"
 log "Supply chain OK para revision ${revision}"
 
 status_json="$("$RPM_OSTREE_BIN" status --json)"
+"$JQ_BIN" -e '
+  (.deployments | type == "array" and length > 0)
+  and ([.deployments[] | select(.booted == true)] | length == 1)
+' <<<"$status_json" >/dev/null || die "Estado de deployments inválido"
 booted_digest="$("$JQ_BIN" -r '
-  [.deployments[] | select(.booted == true) | .["container-image-reference-digest"] // empty][0] // empty
+  .deployments[] | select(.booted == true) | .["container-image-reference-digest"] // empty
 ' <<<"$status_json")"
-staged_digest="$("$JQ_BIN" -r '
-  [.deployments[] | select(.staged == true) | .["container-image-reference-digest"] // empty][0] // empty
+booted_ref="$("$JQ_BIN" -r '
+  .deployments[] | select(.booted == true) | .["container-image-reference"] // empty
 ' <<<"$status_json")"
-staged_ref="$("$JQ_BIN" -r '
-  [.deployments[] | select(.staged == true) | .["container-image-reference"] // empty][0] // empty
-' <<<"$status_json")"
-
-if [[ "$booted_digest" == "$digest" ]]; then
-  log "El sistema ya está arrancado en stable ${digest}; sin cambios."
-  mark_success
-  exit 0
-fi
-
-if [[ "$staged_digest" == "$digest" ]]; then
-  log "Stable ${digest} ya está staged; falta solamente reiniciar cuando sea conveniente."
-  mark_success
-  exit 0
-fi
-
-# Si la verificación cruzó el inicio de jornada o se desconectó AC durante
-# una recuperación laboral, no limpiar ni preparar deployments.
-if ! policy_allows_update; then
-  log "La guarda de horario/energía cambió durante la verificación; stage diferido."
-  exit 0
-fi
-
-if [[ -n "$staged_digest" ]]; then
-  if [[ "$staged_ref" == *"${REPOSITORY}"* ]]; then
-    log "Reemplazando deployment staged anterior gestionado por este updater: ${staged_digest}"
-    "$RPM_OSTREE_BIN" cleanup --pending
-  else
-    die "Hay un deployment staged ajeno (${staged_ref:-sin referencia}); no se reemplaza automáticamente."
+# El primer deployment es el predeterminado, aun si no tiene staged=true.
+# rpm-ostree deriva de él las solicitudes de paquetes de la transacción.
+pending="$("$JQ_BIN" -r '.deployments[0].booted != true' <<<"$status_json")"
+pending_digest="$("$JQ_BIN" -r '.deployments[0]["container-image-reference-digest"] // empty' <<<"$status_json")"
+pending_ref="$("$JQ_BIN" -r '.deployments[0]["container-image-reference"] // empty' <<<"$status_json")"
+if [[ "$pending" == true ]]; then
+  [[ "$pending_digest" =~ ^sha256:[0-9a-f]{64}$ &&
+     "$pending_ref" == "ostree-unverified-registry:${REPOSITORY}@${pending_digest}" ]] \
+    || die "Hay un deployment pendiente ajeno o no fijado por digest; se conserva sin cambios."
+  if [[ "$pending_digest" == "$digest" ]]; then
+    log "Stable ${digest} ya está staged/pendiente; reiniciar cuando sea conveniente. Los paquetes se revisarán después del boot."
+    mark_success
+    exit 0
   fi
 fi
 
+# Sólo migrar RPM locales explícitamente autorizados; no instalar apps ausentes.
+"$JQ_BIN" -e '
+  .schema_version == 1 and (.packages | type == "array")
+  and all(.packages[]; type == "string" and test("^[a-zA-Z0-9][a-zA-Z0-9+_.-]*$"))
+  and ((.packages | unique | length) == (.packages | length))
+' "$HOST_PACKAGES_CONFIG" >/dev/null || die "Política host-packages inválida o ausente"
+managed_names="$("$JQ_BIN" -c '.packages' "$HOST_PACKAGES_CONFIG")"
+# shellcheck disable=SC2016 # Variables de jq, no del shell.
+migrations="$("$JQ_BIN" -c --argjson names "$managed_names" '
+  [.deployments[0]["requested-local-packages"][]? | . as $nevra
+   | capture("^(?<name>.+)-[^-]+-[^-]+$").name as $name
+   | select($names | index($name)) | {name:$name, nevra:$nevra}]
+' <<<"$status_json")"
+"$JQ_BIN" -e '([.[].name] | unique | length) == length' <<<"$migrations" >/dev/null \
+  || die "Solicitudes locales ambiguas para los paquetes gestionados"
+# shellcheck disable=SC2016
+managed_active="$("$JQ_BIN" -r --argjson names "$managed_names" --argjson migrations "$migrations" '
+  .deployments[0] as $d
+  | any($names[]; . as $name
+      | (($d["requested-packages"] // []) | index($name)) != null
+        or any($migrations[]; .name == $name))
+' <<<"$status_json")"
+package_args=()
+while IFS=$'\t' read -r name nevra; do
+  [[ -n "$name" ]] || continue
+  log "Migración host-local autorizada: ${nevra} -> paquete de repositorio ${name}"
+  package_args+=("--uninstall=${nevra}" "--install=${name}")
+done < <("$JQ_BIN" -r '.[] | [.name, .nevra] | @tsv' <<<"$migrations")
+
+if [[ "$pending" == false && "$booted_digest" == "$digest" && "$managed_active" == false ]]; then
+  log "El sistema ya está arrancado en stable ${digest}; sin paquetes host-locales gestionados."
+  mark_success
+  exit 0
+fi
+
+guard_before_transaction() {
+  if ! policy_allows_update; then
+    log "La guarda de horario/energía cambió durante la verificación; stage diferido."
+    exit 0
+  fi
+  # No pisar cambios de un administrador mientras se comprobaba la red/repos.
+  local current
+  current="$("$RPM_OSTREE_BIN" status --json)"
+  [[ "$("$JQ_BIN" -cS '.deployments' <<<"$current")" == \
+     "$("$JQ_BIN" -cS '.deployments' <<<"$status_json")" ]] \
+    || die "Los deployments cambiaron durante la comprobación; reintentar en la próxima ejecución."
+}
+
 target="ostree-unverified-registry:${REPOSITORY}@${digest}"
-log "Preparando deployment verificado: ${target}"
-"$RPM_OSTREE_BIN" rebase "$target"
+if [[ "$pending" == false && "$booted_digest" == "$digest" ]]; then
+  [[ "$booted_ref" == "$target" ]] || die "El origen booted no está fijado al digest verificado; no se ejecuta upgrade."
+fi
+guard_before_transaction
+if [[ "$managed_active" == true ]]; then
+  log "Actualizando metadatos RPM para los paquetes host-locales gestionados"
+  "$RPM_OSTREE_BIN" refresh-md --force
+  guard_before_transaction
+fi
+
+if [[ "$pending" == false && "$booted_digest" == "$digest" ]]; then
+  # upgrade sólo sigue la referencia INMUTABLE que acaba de verificarse.
+  # Así también se actualizan capas RPM cuando el digest OCI no cambia.
+  log "Comprobando actualizaciones RPM sobre el mismo stable verificado"
+  rc=0
+  "$RPM_OSTREE_BIN" upgrade --unchanged-exit-77 "${package_args[@]}" || rc=$?
+  if (( rc == 77 )); then
+    (( ${#package_args[@]} == 0 )) || die "rpm-ostree no aplicó la migración solicitada"
+    log "Stable y paquetes de repositorio sin novedades."
+    mark_success
+    exit 0
+  fi
+  (( rc == 0 )) || die "Falló la actualización de paquetes host-locales (rpm-ostree: ${rc})"
+else
+  # Sin cleanup --pending: rpm-ostree reemplaza el pendiente transaccionalmente.
+  # Si falla un repo, dependencia o firma, el pendiente anterior se conserva.
+  log "Preparando deployment verificado y paquetes host-locales: ${target}"
+  "$RPM_OSTREE_BIN" rebase "$target" "${package_args[@]}"
+fi
 
 status_after="$("$RPM_OSTREE_BIN" status --json)"
-staged_after="$("$JQ_BIN" -r '
-  [.deployments[] | select(.staged == true) | .["container-image-reference-digest"] // empty][0] // empty
-' <<<"$status_after")"
-
-[[ "$staged_after" == "$digest" ]] \
-  || die "rpm-ostree no dejó staged el digest esperado: ${staged_after:-<vacío>}"
+# shellcheck disable=SC2016
+"$JQ_BIN" -e --arg digest "$digest" --arg ref "$target" --argjson migrations "$migrations" --argjson previous "$status_json" '
+  .deployments[0] as $d
+  | $d.booted != true
+    and $d["container-image-reference-digest"] == $digest
+    and $d["container-image-reference"] == $ref
+    and all($migrations[]; . as $m
+      | (($d["requested-packages"] // []) | index($m.name)) != null
+        and (any($d["requested-local-packages"][]?;
+          capture("^(?<name>.+)-[^-]+-[^-]+$").name == $m.name) | not))
+    and all($previous.deployments[0]["requested-local-packages"][]?; . as $old
+      | any($migrations[]; .nevra == $old)
+        or (($d["requested-local-packages"] // []) | index($old)) != null)
+    and all($previous.deployments[0]["requested-packages"][]?; . as $old
+      | (($d["requested-packages"] // []) | index($old)) != null)
+' <<<"$status_after" >/dev/null || die "rpm-ostree no dejó el digest y las solicitudes de paquetes esperados"
 
 mark_success
-
 log "Update preparado correctamente. NO se reinicia automáticamente."
-log "Nuevo stable staged: ${digest}"
+log "Nuevo stable staged/pendiente: ${digest}"

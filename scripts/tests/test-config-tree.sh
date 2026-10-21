@@ -15,6 +15,7 @@ required_files=(
   "files/etc/modprobe.d/iwlwifi.conf"
   "files/etc/udev/rules.d/99-battery.rules"
   "files/etc/tmpfiles.d/lenovo-conservation.conf"
+  "files/etc/fedora-atomic/host-packages.json"
   "files/usr/libexec/fedora-atomic-verified-update"
   "files/usr/lib/systemd/system/fedora-atomic-verified-update.service"
   "files/usr/lib/systemd/system/fedora-atomic-verified-update.timer"
@@ -56,6 +57,9 @@ from pathlib import Path
 data = json.loads(Path("files/etc/skel/.config/Code/User/settings.json").read_text())
 assert data["update.mode"] == "none"
 assert data["telemetry.telemetryLevel"] == "off"
+host = json.loads(Path("files/etc/fedora-atomic/host-packages.json").read_text())
+assert host["schema_version"] == 1
+assert host["packages"] == ["chatgpt", "teamviewer"]
 PY
 
 grep -Fxq 'export VSCODE_DISABLE_TELEMETRY=1' files/etc/profile.d/vscode-tune.sh

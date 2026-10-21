@@ -21,7 +21,8 @@ boot/resume + cada 30 min: catch-up con guardas de horario/edad/energía
        SLSA provenance
        SPDX attestation
           ↓
-       rpm-ostree rebase por digest
+       rebase por digest + capas RPM
+       o upgrade de capas sobre el mismo digest
           ↓
        staged para el próximo reboot
 ```
@@ -125,7 +126,7 @@ rpm-ostree status -v
 
 El timer debe reportar `enabled` y `active`. El servicio es `Type=oneshot`, por lo que fuera de una ejecución normal permanece `inactive (dead)`.
 
-Una ejecución normal sin novedades termina indicando que el digest booted ya coincide con `stable`.
+Una ejecución normal sin novedades indica que el digest booted coincide con `stable`; si hay paquetes host-locales gestionados, también comprueba las capas RPM y termina con `Stable y paquetes de repositorio sin novedades.`
 
 Cuando existe una versión nueva, queda `Staged: yes`; el usuario reinicia cuando le resulte conveniente.
 
@@ -142,7 +143,64 @@ Esto **tampoco reinicia**.
 
 ## Paquetes host-locales
 
-Pueden existir paquetes locales, por ejemplo TeamViewer. El updater usa `rpm-ostree rebase`, por lo que ese estado se conserva igual que en un rebase manual.
+`LocalPackages` representa RPM instalados desde un archivo/URL, conservados en una versión concreta. `LayeredPackages` representa solicitudes de repositorio que rpm-ostree vuelve a resolver al actualizar. El updater gestiona la migración de **ChatGPT y TeamViewer ya instalados**, con la política de `/etc/fedora-atomic/host-packages.json`:
+
+```json
+{
+  "schema_version": 1,
+  "packages": ["chatgpt", "teamviewer"]
+}
+```
+
+La lista autoriza migrar sólo esas solicitudes locales y comprobar las capas si ya son solicitudes por nombre. No instala apps ausentes, no convierte otros RPM locales ni overrides y no elimina capas personales. Una política ausente/inválida bloquea el intento para evitar cambios ambiguos; `packages: []` desactiva esta gestión explícitamente y mantiene el flujo de imagen.
+
+### Cómo se actualizan
+
+1. Se aplican las guardas de horario/edad/energía y el lock existentes.
+2. Se resuelve y verifica `stable` con Cosign, SLSA y SBOM antes de operar sobre RPM.
+3. Si ya hay un deployment pendiente del mismo digest, se conserva y se espera el reboot; la comprobación de paquetes continúa después. Un pendiente ajeno/no fijado por digest se rechaza incluso cuando la imagen booted coincide con `stable`.
+4. Para un nuevo digest, un único `rpm-ostree rebase` combina el cambio de imagen y la migración: `--uninstall=<NEVRA-local>` + `--install=<nombre>`. No hay desinstalación intermedia ni `cleanup --pending`; se parte de las solicitudes del deployment predeterminado para conservar cambios pendientes.
+5. Si `stable` no cambió y hay apps gestionadas, se exige que la referencia booted sea exactamente el origen inmutable verificado. Se refrescan metadatos y se ejecuta `rpm-ostree upgrade --unchanged-exit-77`, con los mismos argumentos de migración si hacen falta. Así las actualizaciones RPM no dependen de que se publique otra imagen. `77` significa sin novedades sólo si no había una migración que aplicar.
+6. Antes de transaccionar se reevalúan horario/energía y que los deployments no hayan cambiado durante las comprobaciones. Después se exige el mismo digest verificado y las solicitudes migradas esperadas antes de registrar éxito.
+
+Las capas de repositorio y sus dependencias se resuelven juntas: otras capas de repositorio pueden actualizarse también, según rpm-ostree; otros **RPM locales fijos** se conservan. No se usa `dnf upgrade` sobre el sistema ni se sigue un tag mutable con `rpm-ostree upgrade`. Ningún camino reinicia o aplica cambios en vivo.
+
+Si falla la resolución, un repositorio o la validación RPM, falla la transacción y el deployment anterior permanece disponible; no se registra éxito. El timer reintenta con los límites habituales. No se continúa con una desinstalación aislada ni se desactiva GPG para sortear errores.
+
+### Requisitos y límites de confianza
+
+Los repositorios del proveedor y sus claves deben estar configurados en el **host**; la imagen no contiene las aplicaciones ni descarga sus instaladores. En la notebook actual están configurados `openai-chatgpt` y `teamviewer`. Comprobar que estén habilitados y con `gpgcheck=1` (ChatGPT también configura `repo_gpgcheck=1`). rpm-ostree usa la configuración y las comprobaciones de firmas RPM del host.
+
+La firma/SLSA/SBOM OCI cubren la imagen base; **no certifican las versiones host-locales** resueltas después desde los proveedores. La migración tampoco garantiza una versión que el proveedor aún no haya publicado o que no pueda resolverse con las dependencias del host.
+
+### Adopción del cambio
+
+El checkout no modifica el host. Después del merge, esperar que build y promoción publiquen un `stable` con este cambio. Usar el updater verificado existente para preparar esa imagen y reiniciar cuando convenga. El script anterior conservará las versiones locales durante ese primer rebase.
+
+Al arrancar la imagen nueva, el updater nuevo podrá migrar los RPM en la siguiente ejecución permitida, incluso si `stable` no cambió. Puede requerir **un segundo reboot** para arrancar las apps actualizadas. Una vez preparados los paquetes no se reconstruye continuamente ese pendiente: se espera el reboot elegido por el usuario.
+
+Comprobar el resultado:
+
+```bash
+journalctl -u fedora-atomic-verified-update.service -b -n 100 --no-pager
+rpm-ostree status -v
+rpm -q chatgpt teamviewer
+```
+
+`rpm -q` muestra las versiones del deployment **en uso**, no las del pendiente. Tras arrancar la migración, `chatgpt`/`teamviewer` deben aparecer en `LayeredPackages`, sin sus NEVRA antiguos en `LocalPackages`. Un `rpm-ostree status --json` permite comparar `requested-packages` y `requested-local-packages` de ambos deployments. Para comparar con lo publicado sin instalar:
+
+```bash
+dnf5 --refresh --repo=openai-chatgpt,teamviewer \
+  repoquery --available --latest-limit=1 chatgpt teamviewer
+```
+
+### Control y recuperación
+
+Para conservar una aplicación como RPM fijo, quitar su nombre de la política **antes de la migración**. Para agregar otra, revisar primero su repositorio, firmas y compatibilidad, y añadir el nombre exacto; no se aceptan globs u opciones de comandos.
+
+Quitar un nombre de la lista después de migrar no vuelve a fijar la versión: la solicitud de repositorio persistirá. Volver a una versión local requiere una operación administrativa explícita o arrancar el deployment anterior. El rollback conserva una ruta de recuperación, pero no revierte los datos de las aplicaciones bajo `/var`.
+
+Los tests usan fixtures del solver y del estado de rpm-ostree: cubren migración/reintentos/fallos y preservación del pendiente, pero no prueban instaladores RPM reales. Después de adoptar la imagen hay que comprobar en el host las versiones, las solicitudes por nombre y una actualización de capas con el mismo digest OCI.
 
 Antes de cambios grandes:
 

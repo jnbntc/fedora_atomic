@@ -57,6 +57,7 @@ stable
 - `cleanup.yml`: retención GHCR.
 - `recovery-drill.yml`: prueba mensual de recuperabilidad de `stable`.
 - `fedora-atomic-verified-update.timer`: updater local de la workstation; ventanas de 18:30 y 02:30 más catch-up persistente cada 30 min y al boot; guarda laboral 08:00–18:20 L–V, excepción tras 72 h sin éxito con AC y reintentos cada 6 h; sin reboot automático (ver `HOST-SETUP.md`).
+- `host-packages.json`: autoriza migrar `chatgpt`/`teamviewer` ya instalados a solicitudes de repositorio; el updater también comprueba capas cuando el digest OCI no cambia. Requiere repositorios/claves del host; ver `HOST-SETUP.md`.
 - `validate.yml`: validación unificada de PRs; adentro separa configuración, hardening/smoke, seguridad/release y recovery.
 
 ## Qué significa cada tipo de fallo

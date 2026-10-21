@@ -240,12 +240,12 @@ Paquetes y servicios inyectados nativamente en la compilación remota. El host n
 * **Backup:** `restic`.
 * **Purgas:** se extrae `firefox` y sus langpacks base para reducir superficie de ataque.
 
-### Layering Dinámico (LocalPackages)
-Algunos paquetes pueden quedar deliberadamente fuera de la imagen OCI cuando su instalación requiere comportamiento host-local difícil de reproducir de forma segura durante el build. Esos paquetes se gestionan por separado y no forman parte de la garantía de reconstrucción del rootfs.
+### Paquetes host-locales
+Algunas aplicaciones permanecen fuera de la imagen OCI porque requieren instalación en el host. La política declarativa [`files/etc/fedora-atomic/host-packages.json`](files/etc/fedora-atomic/host-packages.json) autoriza gestionar `chatgpt` y `teamviewer` **si ya están instalados**.
 
-En el host principal, el caso actual es:
+El updater convierte sus RPM locales de versión fija (`LocalPackages`) en solicitudes por nombre desde los repositorios configurados (`LayeredPackages`), dentro de la misma transacción que prepara el deployment. No instala aplicaciones ausentes ni migra otros RPM locales.
 
-* `teamviewer`
+Con una imagen nueva hace rebase al digest verificado y resuelve las capas RPM; si la imagen no cambió, comprueba actualizaciones de las capas sobre el **mismo origen fijado por digest**, después de verificar Cosign/SLSA/SBOM. Usa las mismas guardas horarias, lock y prioridad baja; nunca reinicia. Los paquetes host-locales dependen de las firmas y disponibilidad de sus repositorios, y no están cubiertos por el SBOM ni las attestations de la imagen OCI. Adopción, diagnóstico y opt-out en [HOST-SETUP.md](docs/HOST-SETUP.md#paquetes-host-locales).
 
 El estado local se captura antes de cambios importantes con `scripts/recovery/capture-host-state.sh` para que estos componentes no queden implícitos.
 

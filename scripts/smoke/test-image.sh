@@ -165,6 +165,8 @@ inside_image() {
   if grep -Eq 'powerprofilesctl|conservation_mode' /etc/udev/rules.d/99-battery.rules /etc/tmpfiles.d/lenovo-conservation.conf; then
     fail "configuración de energía obsoleta"
   fi
+  jq -e '.schema_version == 1 and .packages == ["chatgpt", "teamviewer"]' \
+    /etc/fedora-atomic/host-packages.json >/dev/null || fail "política de paquetes host-locales ausente/inválida"
   test -x /usr/libexec/fedora-atomic-verified-update || fail "updater verificado ausente/no ejecutable"
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.service || fail "service del updater ausente"
   test -f /usr/lib/systemd/system/fedora-atomic-verified-update.timer || fail "timer del updater ausente"
