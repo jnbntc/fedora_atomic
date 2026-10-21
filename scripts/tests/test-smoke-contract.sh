@@ -73,6 +73,11 @@ container_starship_version="$(
   exit 1
 }
 
+grep -Fq '/etc/fedora-atomic/host-packages.json' scripts/smoke/test-image.sh || {
+  echo "FAIL: smoke no valida la política de paquetes host-locales" >&2
+  exit 1
+}
+
 workflow=".github/workflows/build.yml"
 grep -Fq "podman run --rm -i \"\$image_ref\" bash -s -- --inside" scripts/smoke/test-image.sh || {
   echo "FAIL: runner interno de smoke no mantiene stdin abierto con podman -i" >&2

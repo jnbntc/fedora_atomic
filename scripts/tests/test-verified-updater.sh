@@ -60,19 +60,50 @@ if [[ "${1:-}" == "cleanup" && "${2:-}" == "--pending" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "rebase" ]]; then
-  [[ "${FAIL_REBASE:-0}" != 1 ]] || exit 1
-  target="${2:?}"
+if [[ "${1:-}" == refresh-md ]]; then
+  [[ "${FAIL_REFRESH:-0}" != 1 ]] || exit 1
+  if [[ -n "${MOVE_CLOCK_AT_REFRESH:-}" ]]; then
+    printf '%s\n' "$MOVE_CLOCK_AT_REFRESH" >"$FAKE_CLOCK"
+  fi
+  if [[ "${CHANGE_DEPLOYMENTS_AT_REFRESH:-0}" == 1 ]]; then
+    jq '.deployments[0].checksum = "admin-change"' "$FAKE_STATE" >"${FAKE_STATE}.tmp"
+    mv "${FAKE_STATE}.tmp" "$FAKE_STATE"
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == rebase || "${1:-}" == upgrade ]]; then
+  operation="$1"
+  [[ "${FAIL_REBASE:-0}" != 1 && "${FAIL_SOLVE:-0}" != 1 ]] || exit 1
+  if [[ "$operation" == upgrade ]]; then
+    [[ "${FAIL_UPGRADE:-0}" != 1 ]] || exit 1
+    [[ "${UPGRADE_UNCHANGED:-0}" != 1 ]] || exit 77
+    target="$(jq -r '.deployments[0]["container-image-reference"]' "$FAKE_STATE")"
+    shift 2 # upgrade --unchanged-exit-77
+  else
+    target="${2:?}"
+    shift 2
+  fi
   digest="${target##*@}"
   [[ "${WRONG_STAGE:-0}" != 1 ]] || digest="sha256:unexpected"
-  jq --arg d "$digest" --arg r "$target" '
-    .deployments |= map(.staged = false)
-    | .deployments = ([{
-        booted:false,
-        staged:true,
-        "container-image-reference":$r,
-        "container-image-reference-digest":$d
-      }] + .deployments)
+  installs=() uninstalls=()
+  for option in "$@"; do
+    case "$option" in
+      --install=*) installs+=("${option#*=}") ;;
+      --uninstall=*) uninstalls+=("${option#*=}") ;;
+      *) exit 2 ;;
+    esac
+  done
+  [[ "${IGNORE_MIGRATIONS:-0}" != 1 ]] || { installs=(); uninstalls=(); }
+  install_json="$(jq -cn '$ARGS.positional' --args "${installs[@]}")"
+  uninstall_json="$(jq -cn '$ARGS.positional' --args "${uninstalls[@]}")"
+  jq --arg d "$digest" --arg r "$target" --argjson add "$install_json" --argjson remove "$uninstall_json" '
+    .deployments[0] as $origin
+    | .deployments = ([$origin | .booted=false | .staged=true
+      | .["container-image-reference"]=$r | .["container-image-reference-digest"]=$d
+      | .["requested-local-packages"] = [(. // {})["requested-local-packages"][]? | . as $p | select($remove | index($p) | not)]
+      | .["requested-packages"] = (((.["requested-packages"] // []) + $add) | unique)]
+      + [.deployments[] | select(.booted == true)])
   ' "${FAKE_STATE}" >"${FAKE_STATE}.tmp"
   mv "${FAKE_STATE}.tmp" "${FAKE_STATE}"
   exit 0
@@ -90,6 +121,7 @@ export FEDORA_ATOMIC_ALLOW_NON_ROOT=1
 export FEDORA_ATOMIC_REPOSITORY="$REPO"
 export FEDORA_ATOMIC_STATE_DIR="${TMP_DIR}/updater-state"
 export POWER_SUPPLY_ROOT="${TMP_DIR}/power"
+export FEDORA_ATOMIC_HOST_PACKAGES_CONFIG="${ROOT_DIR}/files/etc/fedora-atomic/host-packages.json"
 
 # Caso 1: ya booted en stable -> verifica supply chain pero no rebasea.
 cat >"$STATE" <<EOF
@@ -135,7 +167,7 @@ jq -e --arg d "$DIGEST" '
   any(.deployments[]; .staged == true and .["container-image-reference-digest"] == $d)
 ' "$STATE" >/dev/null
 
-# Caso 3: staged gestionado viejo -> cleanup y reemplazo.
+# Caso 3: staged gestionado viejo -> reemplazo transaccional sin cleanup.
 cat >"$STATE" <<EOF
 {"deployments":[
   {"booted":false,"staged":true,
@@ -150,7 +182,10 @@ EOF
 
 bash "$SCRIPT" >/dev/null
 
-grep -Fq 'rpm-ostree cleanup --pending' "$LOG"
+if grep -Fq 'rpm-ostree cleanup --pending' "$LOG"; then
+  echo 'FAIL: eliminó pendiente antes de completar la transacción' >&2
+  exit 1
+fi
 grep -Fq "rpm-ostree rebase ostree-unverified-registry:$REPO@$DIGEST" "$LOG"
 
 # Caso 4: staged ajeno -> fail closed.
@@ -252,6 +287,8 @@ reset_policy() {
   printf '1\n' >"${POWER_SUPPLY_ROOT}/AC/online"
   printf '%s\n' "$1" >"$FAKE_CLOCK"
   unset FAIL_SKOPEO FAIL_COSIGN MOVE_CLOCK_TO DISCONNECT_POWER FAIL_STATUS FAIL_REBASE WRONG_STAGE
+  unset FAIL_REFRESH MOVE_CLOCK_AT_REFRESH CHANGE_DEPLOYMENTS_AT_REFRESH FAIL_SOLVE FAIL_UPGRADE UPGRADE_UNCHANGED IGNORE_MIGRATIONS
+  export FEDORA_ATOMIC_HOST_PACKAGES_CONFIG="${ROOT_DIR}/files/etc/fedora-atomic/host-packages.json"
   cat >"$STATE" <<EOF
 {"deployments":[{"booted":true,"staged":false,
 "container-image-reference":"ostree-unverified-registry:$REPO@$OLD",
@@ -276,7 +313,7 @@ expect_staged() {
 }
 
 expect_no_stage() {
-  if grep -Eq '^rpm-ostree (rebase|cleanup)' "$LOG"; then
+  if grep -Eq '^rpm-ostree (rebase|upgrade|cleanup)' "$LOG"; then
     echo "FAIL: se modificó el deployment tras cambiar la guarda" >&2
     exit 1
   fi
@@ -443,10 +480,14 @@ grep -Fq 'stage diferido' "${TMP_DIR}/output"
 # Un stable ya booted o staged cuenta como comprobación exitosa, sin rebase.
 for field in booted staged; do
   reset_policy '2026-10-14 20:00:00'
-  jq --arg d "$DIGEST" --arg f "$field" \
-    '.deployments[0] |= (.booted=false | .[$f]=true | .["container-image-reference-digest"]=$d)' \
+  jq --arg d "$DIGEST" --arg f "$field" --arg r "ostree-unverified-registry:$REPO@$DIGEST" \
+    '.deployments[0] |= (.booted=false | .[$f]=true | .["container-image-reference-digest"]=$d | .["container-image-reference"]=$r)' \
     "$STATE" >"${STATE}.tmp"
   mv "${STATE}.tmp" "$STATE"
+  if [[ "$field" == staged ]]; then
+    jq '.deployments += [{booted:true,staged:false}]' "$STATE" >"${STATE}.tmp"
+    mv "${STATE}.tmp" "$STATE"
+  fi
   bash "$SCRIPT" >/dev/null
   expect_no_stage
   [[ "$(cat "${FEDORA_ATOMIC_STATE_DIR}/last-success")" == "$(date +%s)" ]]
@@ -463,4 +504,195 @@ expect_deferred
 flock -u 8
 exec 8>&-
 
-echo "OK: supply chain fail-closed, catch-up, edad, energía, reintentos y concurrencia validados."
+# Paquetes host-locales: fixtures de solicitudes, sin instalar RPM reales.
+CHATGPT_LOCAL=chatgpt-26.928.20755-1.x86_64
+TEAMVIEWER_LOCAL=teamviewer-15.80.4-0.x86_64
+OTHER_LOCAL=chatgpt-addon-1.0-1.x86_64
+
+with_local_apps() {
+  jq --arg c "$CHATGPT_LOCAL" --arg t "$TEAMVIEWER_LOCAL" --arg o "$OTHER_LOCAL" '
+    .deployments[0]["requested-local-packages"] = [$c,$t,$o]
+    | .deployments[0]["requested-packages"] = ["custom-layer"]
+  ' "$STATE" >"${STATE}.tmp"
+  mv "${STATE}.tmp" "$STATE"
+}
+
+same_base() {
+  jq --arg d "$DIGEST" --arg r "ostree-unverified-registry:$REPO@$DIGEST" '
+    .deployments[0]["container-image-reference-digest"]=$d
+    | .deployments[0]["container-image-reference"]=$r
+  ' "$STATE" >"${STATE}.tmp"
+  mv "${STATE}.tmp" "$STATE"
+}
+
+assert_migrated() {
+  jq -e --arg other "$OTHER_LOCAL" '
+    .deployments[0] as $d
+    | ($d["requested-packages"] | index("chatgpt")) != null
+      and ($d["requested-packages"] | index("teamviewer")) != null
+      and ($d["requested-packages"] | index("custom-layer")) != null
+      and $d["requested-local-packages"] == [$other]
+  ' "$STATE" >/dev/null
+  if grep -Eq 'rpm-ostree (cleanup|uninstall|install) ' "$LOG"; then
+    echo 'FAIL: migración separada/no transaccional' >&2
+    exit 1
+  fi
+}
+
+expect_failure_without_success() {
+  if bash "$SCRIPT" >"${TMP_DIR}/output" 2>&1; then
+    echo 'FAIL: se ignoró un error de la actualización host-local' >&2
+    cat "${TMP_DIR}/output" >&2
+    exit 1
+  fi
+  [[ ! -f "${FEDORA_ATOMIC_STATE_DIR}/last-success" ]]
+}
+
+# Nuevo digest + migración atómica, preservando otros locales y capas.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+expect_staged
+grep -Fq "rpm-ostree rebase ostree-unverified-registry:$REPO@$DIGEST --uninstall=$CHATGPT_LOCAL --install=chatgpt --uninstall=$TEAMVIEWER_LOCAL --install=teamviewer" "$LOG"
+assert_migrated
+
+# Pendiente de otra imagen gestionada: derivar de sus solicitudes, no del booted.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+jq '.deployments = ([.deployments[0] | .booted=false | .staged=false]
+  + [.deployments[0] | .["requested-local-packages"]=[] | .["requested-packages"]=["booted-only"]])' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+expect_staged
+assert_migrated
+
+# Mismo digest: upgrade sobre el origen inmutable, sin rebase al mismo ref.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+same_base
+bash "$SCRIPT" >/dev/null
+assert_migrated
+grep -Fq 'rpm-ostree refresh-md --force' "$LOG"
+grep -Fq "rpm-ostree upgrade --unchanged-exit-77 --uninstall=$CHATGPT_LOCAL --install=chatgpt" "$LOG"
+if grep -Fq 'rpm-ostree rebase ' "$LOG"; then exit 1; fi
+
+# Simular reboot de la migración: siguientes comprobaciones no la repiten.
+jq '.deployments = [.deployments[0] | .booted=true | .staged=false]' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+printf '2026-10-15 02:30:00\n' >"$FAKE_CLOCK"
+: >"$LOG"
+export UPGRADE_UNCHANGED=1
+bash "$SCRIPT" >"${TMP_DIR}/output"
+grep -Fq 'Stable y paquetes de repositorio sin novedades.' "${TMP_DIR}/output"
+if grep -Fq -- '--uninstall=' "$LOG"; then exit 1; fi
+[[ "$(cat "${FEDORA_ATOMIC_STATE_DIR}/last-success")" == "$(date +%s)" ]]
+
+# Capas gestionadas ya migradas: se actualizan aun sin nueva base.
+reset_policy '2026-10-14 20:00:00'
+same_base
+jq '.deployments[0]["requested-packages"] = ["chatgpt"]' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+bash "$SCRIPT" >/dev/null
+grep -Fxq 'rpm-ostree upgrade --unchanged-exit-77' "$LOG"
+[[ "$(cat "${FEDORA_ATOMIC_STATE_DIR}/last-success")" == "$(date +%s)" ]]
+
+# Aplicación ausente o RPM local fuera de la lista: nunca instalar/migrar.
+reset_policy '2026-10-14 20:00:00'
+same_base
+jq --arg o "$OTHER_LOCAL" '.deployments[0]["requested-local-packages"] = [$o]' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+bash "$SCRIPT" >/dev/null
+expect_no_stage
+if grep -Fq 'rpm-ostree refresh-md' "$LOG"; then exit 1; fi
+
+# Opt-out explícito y validación estricta de política.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+same_base
+export FEDORA_ATOMIC_HOST_PACKAGES_CONFIG="${TMP_DIR}/policy.json"
+printf '{"schema_version":1,"packages":[]}\n' >"$FEDORA_ATOMIC_HOST_PACKAGES_CONFIG"
+bash "$SCRIPT" >/dev/null
+expect_no_stage
+printf '2026-10-15 02:30:00\n' >"$FAKE_CLOCK"
+for policy in '{"schema_version":2,"packages":[]}' \
+              '{"schema_version":1,"packages":["chatgpt","chatgpt"]}' \
+              '{"schema_version":1,"packages":["--reboot"]}' \
+              '{"schema_version":1,"packages":[1]}' '{malformed'; do
+  : >"$LOG"
+  rm -f "${FEDORA_ATOMIC_STATE_DIR}/last-success"
+  printf '%s\n' "$policy" >"$FEDORA_ATOMIC_HOST_PACKAGES_CONFIG"
+  expect_failure_without_success
+  expect_no_stage
+done
+rm "$FEDORA_ATOMIC_HOST_PACKAGES_CONFIG"
+expect_failure_without_success
+
+# Fallo de metadatos, repos/firmas/dependencias o upgrade: nunca perder el pendiente.
+for failure in FAIL_REFRESH FAIL_SOLVE; do
+  reset_policy '2026-10-14 20:00:00'
+  with_local_apps
+  jq '.deployments = ([.deployments[0] | .booted=false | .staged=true] + .deployments)' "$STATE" >"${STATE}.tmp"
+  mv "${STATE}.tmp" "$STATE"
+  cp "$STATE" "${STATE}.before"
+  export "$failure=1"
+  expect_failure_without_success
+  cmp "$STATE" "${STATE}.before"
+  if grep -Fq 'rpm-ostree cleanup' "$LOG"; then exit 1; fi
+done
+for failure in FAIL_UPGRADE WRONG_STAGE IGNORE_MIGRATIONS UPGRADE_UNCHANGED; do
+  reset_policy '2026-10-14 20:00:00'
+  with_local_apps
+  same_base
+  export "$failure=1"
+  expect_failure_without_success
+done
+
+# No hacer upgrade desde un tag mutable ni sobre un pendiente ajeno.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+same_base
+jq --arg r "ostree-unverified-registry:$REPO:stable" '.deployments[0]["container-image-reference"]=$r' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+expect_failure_without_success
+expect_no_stage
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+same_base
+jq '.deployments = ([.deployments[0] | .booted=false | .staged=false
+  | .["container-image-reference"]="ostree-unverified-registry:ghcr.io/foreign/image@sha256:bad"] + .deployments)' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+expect_failure_without_success
+expect_no_stage
+
+# Pendiente correcto sin staged=true: conservarlo, incluso con apps locales.
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+same_base
+jq '.deployments = ([.deployments[0] | .booted=false | .staged=false] + .deployments)' "$STATE" >"${STATE}.tmp"
+mv "${STATE}.tmp" "$STATE"
+bash "$SCRIPT" >/dev/null
+expect_no_stage
+
+# Cambio de guarda o deployments durante refresh-md: no comenzar transacción.
+reset_policy '2026-10-14 07:59:00'
+with_local_apps
+export MOVE_CLOCK_AT_REFRESH='2026-10-14 08:00:00'
+bash "$SCRIPT" >"${TMP_DIR}/output"
+expect_no_stage
+[[ ! -f "${FEDORA_ATOMIC_STATE_DIR}/last-success" ]]
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+export CHANGE_DEPLOYMENTS_AT_REFRESH=1
+expect_failure_without_success
+expect_no_stage
+
+# La presencia de paquetes gestionados no salta horario ni verificación OCI.
+reset_policy '2026-10-14 12:00:00'
+with_local_apps
+expect_deferred
+reset_policy '2026-10-14 20:00:00'
+with_local_apps
+export FAIL_COSIGN=1
+expect_failure_without_success
+expect_no_stage
+if grep -Fq 'rpm-ostree refresh-md' "$LOG"; then exit 1; fi
+
+echo "OK: supply chain, catch-up, migración y actualizaciones RPM con base estable validadas."
