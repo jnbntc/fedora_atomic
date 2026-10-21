@@ -230,20 +230,21 @@ fi
 ' "$HOST_PACKAGES_CONFIG" >/dev/null || die "Política host-packages inválida o ausente"
 managed_names="$("$JQ_BIN" -c '.packages' "$HOST_PACKAGES_CONFIG")"
 # shellcheck disable=SC2016 # Variables de jq, no del shell.
-migrations="$("$JQ_BIN" -c --argjson names "$managed_names" '
-  [.deployments[0]["requested-local-packages"][]? | . as $nevra
+migrations="$(printf '%s\n' "$managed_names" "$status_json" | "$JQ_BIN" -cs '
+  .[0] as $names
+  | [.[1].deployments[0]["requested-local-packages"][]? | . as $nevra
    | capture("^(?<name>.+)-[^-]+-[^-]+$").name as $name
    | select($names | index($name)) | {name:$name, nevra:$nevra}]
-' <<<"$status_json")"
+')"
 "$JQ_BIN" -e '([.[].name] | unique | length) == length' <<<"$migrations" >/dev/null \
   || die "Solicitudes locales ambiguas para los paquetes gestionados"
 # shellcheck disable=SC2016
-managed_active="$("$JQ_BIN" -r --argjson names "$managed_names" --argjson migrations "$migrations" '
-  .deployments[0] as $d
+managed_active="$(printf '%s\n' "$managed_names" "$migrations" "$status_json" | "$JQ_BIN" -rs '
+  .[0] as $names | .[1] as $migrations | .[2].deployments[0] as $d
   | any($names[]; . as $name
       | (($d["requested-packages"] // []) | index($name)) != null
         or any($migrations[]; .name == $name))
-' <<<"$status_json")"
+')"
 package_args=()
 while IFS=$'\t' read -r name nevra; do
   [[ -n "$name" ]] || continue
@@ -256,6 +257,15 @@ if [[ "$pending" == false && "$booted_digest" == "$digest" && "$managed_active" 
   mark_success
   exit 0
 fi
+
+# Conservar sólo las solicitudes necesarias para la postvalidación. Tanto éstas
+# como los demás JSON viajan por stdin, nunca por argv ni con topes artificiales.
+previous_requests="$("$JQ_BIN" -c '
+  .deployments[0] | {
+    local_packages: (.["requested-local-packages"] // []),
+    layered_packages: (.["requested-packages"] // [])
+  }
+' <<<"$status_json")"
 
 guard_before_transaction() {
   if ! policy_allows_update; then
@@ -303,8 +313,9 @@ fi
 
 status_after="$("$RPM_OSTREE_BIN" status --json)"
 # shellcheck disable=SC2016
-"$JQ_BIN" -e --arg digest "$digest" --arg ref "$target" --argjson migrations "$migrations" --argjson previous "$status_json" '
-  .deployments[0] as $d
+printf '%s\n' "$migrations" "$previous_requests" "$status_after" |
+"$JQ_BIN" -se --arg digest "$digest" --arg ref "$target" '
+  .[0] as $migrations | .[1] as $previous | .[2].deployments[0] as $d
   | $d.booted != true
     and $d["container-image-reference-digest"] == $digest
     and $d["container-image-reference"] == $ref
@@ -312,12 +323,12 @@ status_after="$("$RPM_OSTREE_BIN" status --json)"
       | (($d["requested-packages"] // []) | index($m.name)) != null
         and (any($d["requested-local-packages"][]?;
           capture("^(?<name>.+)-[^-]+-[^-]+$").name == $m.name) | not))
-    and all($previous.deployments[0]["requested-local-packages"][]?; . as $old
+    and all($previous.local_packages[]; . as $old
       | any($migrations[]; .nevra == $old)
         or (($d["requested-local-packages"] // []) | index($old)) != null)
-    and all($previous.deployments[0]["requested-packages"][]?; . as $old
+    and all($previous.layered_packages[]; . as $old
       | (($d["requested-packages"] // []) | index($old)) != null)
-' <<<"$status_after" >/dev/null || die "rpm-ostree no dejó el digest y las solicitudes de paquetes esperados"
+' >/dev/null || die "rpm-ostree no dejó el digest y las solicitudes de paquetes esperados"
 
 mark_success
 log "Update preparado correctamente. NO se reinicia automáticamente."

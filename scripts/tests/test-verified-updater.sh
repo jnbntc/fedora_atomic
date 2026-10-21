@@ -97,13 +97,21 @@ if [[ "${1:-}" == rebase || "${1:-}" == upgrade ]]; then
   [[ "${IGNORE_MIGRATIONS:-0}" != 1 ]] || { installs=(); uninstalls=(); }
   install_json="$(jq -cn '$ARGS.positional' --args "${installs[@]}")"
   uninstall_json="$(jq -cn '$ARGS.positional' --args "${uninstalls[@]}")"
-  jq --arg d "$digest" --arg r "$target" --argjson add "$install_json" --argjson remove "$uninstall_json" '
+  jq --arg d "$digest" --arg r "$target" --argjson add "$install_json" --argjson remove "$uninstall_json" --arg failure "${POSTVALIDATION_FAILURE:-}" '
     .deployments[0] as $origin
     | .deployments = ([$origin | .booted=false | .staged=true
       | .["container-image-reference"]=$r | .["container-image-reference-digest"]=$d
       | .["requested-local-packages"] = [(. // {})["requested-local-packages"][]? | . as $p | select($remove | index($p) | not)]
       | .["requested-packages"] = (((.["requested-packages"] // []) + $add) | unique)]
       + [.deployments[] | select(.booted == true)])
+    | .deployments[0] |= (
+      if $failure == "mutable-reference" then .["container-image-reference"] = "ostree-unverified-registry:ghcr.io/test/fedora_atomic:stable"
+      elif $failure == "missing-migrated" then .["requested-packages"] -= ["chatgpt"]
+      elif $failure == "retained-local" then .["requested-local-packages"] += [$origin["requested-local-packages"][0]]
+      elif $failure == "lost-local" then .["requested-local-packages"] = []
+      elif $failure == "lost-layered" then .["requested-packages"] -= ["custom-layer"]
+      elif $failure == "not-pending" then .booted = true
+      else . end)
   ' "${FAKE_STATE}" >"${FAKE_STATE}.tmp"
   mv "${FAKE_STATE}.tmp" "${FAKE_STATE}"
   exit 0
@@ -288,6 +296,7 @@ reset_policy() {
   printf '%s\n' "$1" >"$FAKE_CLOCK"
   unset FAIL_SKOPEO FAIL_COSIGN MOVE_CLOCK_TO DISCONNECT_POWER FAIL_STATUS FAIL_REBASE WRONG_STAGE
   unset FAIL_REFRESH MOVE_CLOCK_AT_REFRESH CHANGE_DEPLOYMENTS_AT_REFRESH FAIL_SOLVE FAIL_UPGRADE UPGRADE_UNCHANGED IGNORE_MIGRATIONS
+  unset JQ_BIN POSTVALIDATION_FAILURE
   export FEDORA_ATOMIC_HOST_PACKAGES_CONFIG="${ROOT_DIR}/files/etc/fedora-atomic/host-packages.json"
   cat >"$STATE" <<EOF
 {"deployments":[{"booted":true,"staged":false,
@@ -694,5 +703,77 @@ export FAIL_COSIGN=1
 expect_failure_without_success
 expect_no_stage
 if grep -Fq 'rpm-ostree refresh-md' "$LOG"; then exit 1; fi
+
+# Regresión ARG_MAX: rechazar payloads JSON en argv independientemente del SO.
+# Sólo el updater usa este wrapper; los fixtures siguen usando el jq real.
+REAL_JQ="$(command -v jq)"
+export REAL_JQ
+cat >"${BIN}/jq-stdin-guard" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+for argument in "$@"; do
+  case "$argument" in
+    *updater-status-sentinel*|*updater-request-sentinel*)
+      echo 'FAIL: JSON de estado/solicitudes pasado por argv a jq' >&2
+      exit 99 ;;
+  esac
+done
+exec "${REAL_JQ:?}" "$@"
+EOF
+chmod +x "${BIN}/jq-stdin-guard"
+
+for scenario in small-marker large-rebase large-same-base large-requests; do
+  reset_policy '2026-10-14 20:00:00'
+  with_local_apps
+  [[ "$scenario" != large-same-base ]] || same_base
+  # El primer caso reproduce el error por contrato, sin depender de ARG_MAX.
+  # Los restantes incluyen >2 MiB de metadata irrelevante en deployments.
+  padding=2097152
+  [[ "$scenario" != small-marker ]] || padding=512
+  jq --argjson padding "$padding" '
+    .deployments[0].metadata = {irrelevant: ("updater-status-sentinel:" + ("x" * $padding))}
+  ' "$STATE" >"${STATE}.tmp"
+  mv "${STATE}.tmp" "$STATE"
+  if [[ "$scenario" == large-requests ]]; then
+    # También las estructuras mínimas pueden superar el límite por argumento.
+    jq '
+      .deployments[0]["requested-local-packages"] += [range(600)
+        | "updater-request-sentinel-local-" + ("x" * 240) + (tostring) + "-1.0-1.x86_64"]
+      | .deployments[0]["requested-packages"] += [range(600)
+        | "updater-request-sentinel-layer-" + ("x" * 240) + (tostring)]
+    ' "$STATE" >"${STATE}.tmp"
+    mv "${STATE}.tmp" "$STATE"
+  fi
+  export JQ_BIN="${BIN}/jq-stdin-guard"
+  if ! bash "$SCRIPT" >"${TMP_DIR}/output" 2>&1; then
+    echo "FAIL: falso negativo con JSON de estado: $scenario" >&2
+    cat "${TMP_DIR}/output" >&2
+    exit 1
+  fi
+  [[ "$(cat "${FEDORA_ATOMIC_STATE_DIR}/last-success")" == "$(date +%s)" ]]
+  grep -Fq 'Update preparado correctamente.' "${TMP_DIR}/output"
+  if grep -Eq 'ERROR:|Argument list too long' "${TMP_DIR}/output"; then exit 1; fi
+  if [[ "$scenario" == large-same-base ]]; then
+    grep -Fq 'rpm-ostree upgrade --unchanged-exit-77' "$LOG"
+  else
+    grep -Fq "rpm-ostree rebase ostree-unverified-registry:$REPO@$DIGEST" "$LOG"
+  fi
+  if [[ "$scenario" == large-requests ]]; then
+    jq -e '.deployments[0] | (.["requested-local-packages"] | length) == 601
+      and (.["requested-packages"] | length) == 603' "$STATE" >/dev/null
+  else
+    assert_migrated
+  fi
+done
+
+# La nueva forma de transportar JSON no debe relajar ninguna postcondición.
+# WRONG_STAGE ya cubre el digest incorrecto; aquí cubrimos los otros invariantes.
+for failure in mutable-reference missing-migrated retained-local lost-local lost-layered not-pending; do
+  reset_policy '2026-10-14 20:00:00'
+  with_local_apps
+  export POSTVALIDATION_FAILURE="$failure"
+  expect_failure_without_success
+  grep -Fq 'rpm-ostree no dejó el digest y las solicitudes de paquetes esperados' "${TMP_DIR}/output"
+done
 
 echo "OK: supply chain, catch-up, migración y actualizaciones RPM con base estable validadas."
