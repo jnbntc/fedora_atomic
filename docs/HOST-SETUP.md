@@ -86,7 +86,7 @@ sudo ls -l /var/lib/fedora-atomic-verified-update/
 
 Verificar que la unidad efectiva muestre `Persistent=true`, `OnBootSec=10min` y el calendario de 30 min. Revisar cualquier override bajo `/etc/systemd/system/` que oculte las unidades de `/usr/lib`; no borrarlo a ciegas. Para un host encendido en horario laboral sin historial, esperar el mensaje de diferimiento y `first-seen`, sin `last-success` hasta una comprobación permitida.
 
-Validación real pendiente después de adoptar la imagen: suspender antes de 18:30 y retomar a las 20:00; confirmar un catch-up o un diferimiento por éxito reciente, ningún reboot, y el digest esperado si aparece un nuevo `stable`. Retomar en jornada con éxito reciente debe diferir sin consultar GHCR. Una recuperación laboral atrasada requiere AC; no se recomienda alterar timestamps reales para forzarla. Los tests simulan esas edades y eventos, no suspenden hardware.
+La **validación física de suspend/resume + catch-up sigue pendiente**, con seguimiento en el [issue #24](https://github.com/jnbntc/fedora_atomic/issues/24). Incluye reanudar después de las 20:00 tras suspender antes de las 18:30 y reanudar en jornada con éxito reciente, respetando diferimientos y sin reboot automático. La recuperación laboral atrasada queda como escenario futuro seguro: requiere 72 h sin éxito, AC y reintentos cada 6 h, sin modificar timestamps para forzarla.
 
 Para volver al comportamiento anterior, revertir este cambio en el repo y consumir la imagen correspondiente. El estado de `/var/lib` puede conservarse; el script anterior no lo usa.
 
@@ -194,13 +194,21 @@ dnf5 --refresh --repo=openai-chatgpt,teamviewer \
   repoquery --available --latest-limit=1 chatgpt teamviewer
 ```
 
+### Validación física confirmada (2026-10-26)
+
+Tras el merge del [PR #23](https://github.com/jnbntc/fedora_atomic/pull/23), build y promoción a `stable` finalizaron correctamente. La notebook arrancó con `44.20261025.0`, digest `sha256:dcd661013c1123744624682ad81d8835d662d0b9048a7b4c63888db9bfb148cc` y revisión OCI `d21f4213ca9a8c2bc9defb9dae90f037fc60a5b0`, sin deployment staged y con el anterior disponible para rollback. `chatgpt` y `teamviewer` permanecen como `LayeredPackages` en el deployment activo.
+
+La ejecución manual del updater verificó Cosign, provenance SLSA y SBOM SPDX 2.3, refrescó metadata RPM y comprobó las capas sobre el mismo digest verificado. Terminó con `Stable y paquetes de repositorio sin novedades.`, sin `Argument list too long` ni falso error de postvalidación; `last-success` se actualizó a `2026-10-26 11:29:54 -03`.
+
+Con esta evidencia en hardware quedan validados el flujo de paquetes host-locales y la adopción del fix del PR #23; el incidente **ARG_MAX queda cerrado**. Esta validación no incluye suspend/resume: ese pendiente continúa en el [issue #24](https://github.com/jnbntc/fedora_atomic/issues/24).
+
 ### Control y recuperación
 
 Para conservar una aplicación como RPM fijo, quitar su nombre de la política **antes de la migración**. Para agregar otra, revisar primero su repositorio, firmas y compatibilidad, y añadir el nombre exacto; no se aceptan globs u opciones de comandos.
 
 Quitar un nombre de la lista después de migrar no vuelve a fijar la versión: la solicitud de repositorio persistirá. Volver a una versión local requiere una operación administrativa explícita o arrancar el deployment anterior. El rollback conserva una ruta de recuperación, pero no revierte los datos de las aplicaciones bajo `/var`.
 
-Los tests usan fixtures del solver y del estado de rpm-ostree: cubren migración/reintentos/fallos y preservación del pendiente, pero no prueban instaladores RPM reales. Después de adoptar la imagen hay que comprobar en el host las versiones, las solicitudes por nombre y una actualización de capas con el mismo digest OCI.
+Los tests usan fixtures del solver y del estado de rpm-ostree para cubrir migración, reintentos, fallos y preservación del pendiente. Complementan la validación física del flujo de paquetes host-locales registrada arriba.
 
 Antes de cambios grandes:
 
