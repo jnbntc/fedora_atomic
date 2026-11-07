@@ -18,14 +18,11 @@ jobs:
       - name: Bash syntax
         run: |
           bash -n scripts/tests/test-config-tree.sh
-          bash -n scripts/tests/test-power-profile.sh
-          bash -n files/usr/libexec/fedora-power-profile
       - name: ShellCheck
-        run: shellcheck scripts/tests/test-config-tree.sh scripts/tests/test-power-profile.sh files/usr/libexec/fedora-power-profile
+        run: shellcheck scripts/tests/test-config-tree.sh
       - name: Validate config tree
         run: |
           bash scripts/tests/test-config-tree.sh
-          bash scripts/tests/test-power-profile.sh
 
   image-contract:
     name: Image hardening & smoke contract

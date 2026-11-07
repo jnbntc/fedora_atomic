@@ -1,2 +1,0 @@
-ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="/usr/bin/systemctl --no-block start fedora-power-profile.service"
-ACTION=="add|change", SUBSYSTEM=="power_supply", ATTR{online}=="1", RUN+="/usr/bin/systemctl --no-block start fedora-power-profile.service"
