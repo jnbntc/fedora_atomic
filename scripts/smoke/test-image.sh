@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-EXPECTED_FEDORA_VERSION="44"
+EXPECTED_FEDORA_VERSION="45"
 EXPECTED_FEDORA_ID="fedora"
 EXPECTED_STARSHIP_VERSION="1.26.0"
 EXPECTED_COSIGN_VERSION="v3.1.3"
@@ -97,6 +97,9 @@ inside_image() {
   [[ "${ID:-}" == "$EXPECTED_FEDORA_ID" ]]     || fail "ID=${ID:-<vacío>} (esperado: $EXPECTED_FEDORA_ID)"
   [[ "${VERSION_ID:-}" == "$EXPECTED_FEDORA_VERSION" ]]     || fail "VERSION_ID=${VERSION_ID:-<vacío>} (esperado: $EXPECTED_FEDORA_VERSION)"
 
+  [[ "${VARIANT_ID:-}" == silverblue ]] || fail "VARIANT_ID=${VARIANT_ID:-<vacío>} (esperado: silverblue)"
+  info "Sistema: VERSION_ID=$VERSION_ID VARIANT_ID=$VARIANT_ID"
+
   test -f /usr/share/rpm/rpmdb.sqlite     || fail "rpmdb OSTree ausente en /usr/share/rpm/rpmdb.sqlite"
 
   missing_packages=()
@@ -169,6 +172,7 @@ inside_image() {
   [[ "$(readlink "$timer_link")" == "/usr/lib/systemd/system/fedora-atomic-verified-update.timer" ]] \
     || fail "symlink inesperado del timer verificado: $(readlink "$timer_link")"
 
+  podman --version
   info "Fedora $VERSION_ID, paquetes, comandos, Starship, Cosign y unidades: OK"
 }
 
@@ -209,6 +213,15 @@ host_mode() {
   test -x "$rootfs/usr/bin/starship" || fail "Starship ausente/no ejecutable en rootfs"
 
   compare_declared_config "$rootfs" "$expected_root"
+
+  # Evidencia del artefacto: no reintroducir la automatización retirada en #26.
+  local retired
+  for retired in usr/libexec/fedora-power-profile usr/lib/systemd/system/fedora-power-profile.service \
+    etc/udev/rules.d/99-battery.rules etc/tmpfiles.d/lenovo-conservation.conf; do
+    [[ ! -e "$rootfs/$retired" && ! -L "$rootfs/$retired" ]] || fail "Automatización retirada presente: /$retired"
+    info "Ausente en el artefacto: /$retired"
+  done
+  podman image inspect --format 'Versión OCI: {{ index .Labels "org.opencontainers.image.version" }}; OSTree bootable: {{ index .Labels "ostree.bootable" }}' "$image_ref"
 
   script_path="$(readlink -f "${BASH_SOURCE[0]}")"
   podman run --rm -i "$image_ref" bash -s -- --inside < "$script_path"
