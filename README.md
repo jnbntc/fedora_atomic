@@ -4,9 +4,9 @@
 [![Promote Stable](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml)
 [![Repository Validation](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml)
 [![Recovery Drill](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml)
-[![Base](https://img.shields.io/badge/Base-Fedora_Silverblue_44-blue.svg)](https://fedoraproject.org/silverblue/)
+[![Base](https://img.shields.io/badge/Base-Fedora_Silverblue_45-blue.svg)](https://fedoraproject.org/silverblue/)
 
-Workstation personal basada en **Fedora Silverblue 44**, construida como imagen OCI y usada también como laboratorio de infraestructura inmutable, CI/CD y supply-chain security.
+Workstation personal basada en **Fedora Silverblue 45**, construida como imagen OCI y usada también como laboratorio de infraestructura inmutable, CI/CD y supply-chain security.
 
 El objetivo original era simple: dejar de depender de cambios manuales difíciles de recordar y poder reconstruir el sistema desde código. Con el tiempo el flujo incorporó smoke tests sobre el artefacto real, SBOMs, un security gate basado en metadata nativa de Fedora, identidades OCI inmutables, firma keyless con Cosign, provenance SLSA, promoción `candidate → stable`, actualización local verificada por digest y ejercicios periódicos de recovery.
 
@@ -68,7 +68,7 @@ El ciclo de vida de la imagen base está orquestado por GitHub Actions mediante:
 El workflow usa un **cache-buster diario UTC** (`YYYYMMDD`) para forzar como máximo una invalidación deliberada de la transacción principal por día, permitiendo reutilizar caché en reintentos o ejecuciones manuales posteriores del mismo día.
 
 * **Motor OCI:** se utiliza `podman` nativo junto con `buildah` para construir la imagen basada en OSTree. El build funciona con los defaults de seguridad de Podman: no requiere `cap-add=ALL`, `seccomp=unconfined` ni `label=disable`.
-* **Smoke tests del artefacto:** antes del análisis de seguridad se valida desde dentro de la imagen que Fedora 44, paquetes, comandos, Starship y unidades systemd esperadas estén presentes; además, todo `files/etc/` se compara byte a byte contra el rootfs exportado y Firefox debe permanecer ausente.
+* **Smoke tests del artefacto:** antes del análisis de seguridad se valida desde dentro de la imagen que Fedora 45, paquetes, comandos, Starship y unidades systemd esperadas estén presentes; además, todo `files/etc/` se compara byte a byte contra el rootfs exportado y Firefox debe permanecer ausente.
 * **SBOM:** el rootfs final se exporta de forma *squashed* y Syft `v1.52.0` genera inventarios **SPDX 2.3 JSON** y **CycloneDX JSON**. La ejecución falla si no detecta el rpmdb o si el SBOM no contiene paquetes RPM.
 * **Fedora Security Gate:** `dnf5 advisory` consulta la metadata nativa de Fedora contra el rpmdb exacto de la imagen recién construida. La política versionada en `security/vulnerability-policy.json` bloquea advisories `Critical` e `Important` disponibles; `Moderate` y `Low` son informativos.
 * **Grype advisory:** Grype `v0.119.0` analiza el SBOM como capa complementaria para dependencias embebidas (Go, Python, CPE, etc.). No se usa como autoridad para CVE del SO porque los probes de Etapa 5 comprobaron que no asociaba los RPM OSTree con namespaces Fedora.
@@ -213,7 +213,7 @@ files/etc/
 
 Los servicios base (`podman-auto-update.timer`, `tailscaled`, `thermald` y `libvirtd`) mantienen symlinks explícitos en el `Containerfile`. El updater verificado, en cambio, se habilita con `systemctl enable fedora-atomic-verified-update.timer`, por lo que su enlace queda bajo `/etc/systemd/system/timers.target.wants/`. Los smoke tests verifican explícitamente ese contrato.
 
-Fedora 44 usa TuneD/tuned-ppd para seleccionar los perfiles energéticos. Con el perfil lógico PPD `balanced`, el comportamiento validado es TuneD `balanced` en AC y `balanced-battery` en batería. La auditoría post-boot separa `systemctl --failed --no-pager` y `systemctl --user --failed --no-pager`; el snapshot también guarda el perfil TuneD activo.
+Fedora 45 delega la selección de perfiles energéticos a TuneD/tuned-ppd. En la validación previa en hardware con Fedora 44 y el perfil lógico PPD `balanced`, TuneD usó `balanced` en AC y `balanced-battery` en batería. La auditoría post-boot separa `systemctl --failed --no-pager` y `systemctl --user --failed --no-pager`; el snapshot también guarda el perfil TuneD activo.
 
 La coherencia del árbol se valida con `scripts/tests/test-config-tree.sh` y el workflow `Config Tree Validation`.
 

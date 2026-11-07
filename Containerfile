@@ -1,4 +1,4 @@
-FROM quay.io/fedora-ostree-desktops/silverblue:44
+FROM quay.io/fedora-ostree-desktops/silverblue:45
 
 # 1. Repositorios externos y llaves GPG
 # vscode.repo se versiona como IaC porque es configuración propia.

@@ -219,7 +219,7 @@ rpm-ostree status -v
 
 ## Energía y batería
 
-Fedora 44 usa TuneD/tuned-ppd para seleccionar los perfiles energéticos. Con el perfil lógico PPD `balanced`, el comportamiento validado es TuneD `balanced` en AC y `balanced-battery` en batería.
+Fedora 45 delega la selección de perfiles energéticos a TuneD/tuned-ppd. En la validación previa en hardware con Fedora 44 y el perfil lógico PPD `balanced`, TuneD usó `balanced` en AC y `balanced-battery` en batería.
 
 ## Verificación después de reboot
 

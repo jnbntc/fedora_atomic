@@ -191,7 +191,7 @@ jobs:
             --output json \
             --file security-evidence/grype-advisory.json
 
-          jq -e '.distro.name == "fedora" and .distro.version == "44"' \
+          jq -e '.distro.name == "fedora" and .distro.version == "45"' \
             security-evidence/grype-advisory.json >/dev/null
 
           jq '{

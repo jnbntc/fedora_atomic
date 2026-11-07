@@ -89,7 +89,7 @@ jobs:
             .schema_version == 1
             and .engine == "dnf5-advisory"
             and .expected_distro.name == "fedora"
-            and .expected_distro.version == "44"
+            and .expected_distro.version == "45"
             and .scope.mode == "available"
             and .scope.type == "security"
             and (.block_severities | map(ascii_downcase) | sort) == ["critical", "important"]
