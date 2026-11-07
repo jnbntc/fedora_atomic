@@ -4,7 +4,7 @@
 [![Promote Stable](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/promote-stable.yml)
 [![Repository Validation](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/validate.yml)
 [![Recovery Drill](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml/badge.svg?branch=main)](https://github.com/jnbntc/fedora_atomic/actions/workflows/recovery-drill.yml)
-[![Base](https://img.shields.io/badge/Base-Fedora_Silverblue_44-blue.svg)](https://fedoraproject.org/silverblue/)
+[![Base](https://img.shields.io/badge/Base-Fedora_Silverblue_45-blue.svg)](https://fedoraproject.org/silverblue/)
 
 Workstation personal basada en **Fedora Silverblue 45**, construida como imagen OCI y usada también como laboratorio de infraestructura inmutable, CI/CD y supply-chain security.
 
